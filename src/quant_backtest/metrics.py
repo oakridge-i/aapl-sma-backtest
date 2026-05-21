@@ -139,10 +139,23 @@ def capture_ratio(strategy_returns: pd.Series, benchmark_returns: pd.Series, dir
     return float(aligned_strategy[mask].sum() / benchmark_sum)
 
 
+def capture_spread(upside_capture: float, downside_capture: float) -> float:
+    if math.isnan(upside_capture) or math.isnan(downside_capture):
+        return math.nan
+    return float(upside_capture - downside_capture)
+
+
 def missed_return_while_underweight(benchmark_returns: pd.Series, target_exposure: pd.Series) -> float:
     aligned_returns, aligned_exposure = benchmark_returns.align(target_exposure, join="inner")
     underweight = 1.0 - aligned_exposure.astype(float).clip(lower=0.0, upper=1.0)
     return float((aligned_returns * underweight).sum())
+
+
+def avoided_downside_while_underweight(benchmark_returns: pd.Series, target_exposure: pd.Series) -> float:
+    aligned_returns, aligned_exposure = benchmark_returns.align(target_exposure, join="inner")
+    underweight = 1.0 - aligned_exposure.astype(float).clip(lower=0.0, upper=1.0)
+    downside = aligned_returns.where(aligned_returns < 0.0, 0.0)
+    return float(-(downside * underweight).sum())
 
 
 def holding_periods(position: pd.Series) -> pd.Series:

@@ -104,10 +104,57 @@ The best current interpretation:
 - Turnover control is now built into model selection, not just reviewed after the fact.
 - Shorts should still wait until the long-only signal is stronger.
 
+## v0.4 Capture-Aware Risk Model
+
+The v0.4 pass tested whether the model could improve behavior quality, not just
+raw return. The target was higher upside capture, lower downside capture, a
+positive capture spread, controlled turnover, and no degradation versus the
+v0.3 low-turnover baseline.
+
+The selected result is:
+
+| Field | Value |
+| --- | --- |
+| Selection status | `no_robust_upgrade_baseline_retained` |
+| Retained model | v0.3 `SMA 5/200 long_cash_hysteresis` |
+| Reason | No v0.4 candidate passed the full capture and turnover filter set |
+
+On the test period from `2021-01-04` through `2026-05-19`:
+
+| Metric | v2 SMA 5/50 | v0.3 retained | v0.4 selected output |
+| --- | ---: | ---: | ---: |
+| CAGR | 7.29% | 11.00% | 11.00% |
+| Sharpe | 0.51 | 0.66 | 0.66 |
+| Max drawdown | -23.08% | -23.62% | -23.62% |
+| Annualized turnover | 8.40 | 1.68 | 1.68 |
+| Upside capture | 46.56% | 54.48% | 54.48% |
+| Downside capture | 47.14% | 53.61% | 53.61% |
+| Capture spread | -0.58 pp | 0.87 pp | 0.87 pp |
+
+Some v0.4 candidates had higher Sharpe and lower drawdown than the retained
+model. The problem is why they improved: they leaned on QQQ fallback exposure,
+pushed annualized turnover into the `7.8-10.6` range, and still captured only
+about `30-36%` of AAPL upside. That does not satisfy the model objective. Under
+the configured rules, retaining v0.3 is the correct outcome.
+
+The useful work from v0.4 is the new diagnostics:
+
+- `capture_leaderboard.csv` shows which candidates failed and why.
+- `risk_filter_sweep.csv` separates risk-filter behavior from fallback behavior.
+- `regime_results.csv` shows where the retained model still struggles.
+- `trade_log.csv` makes entries, exits, MFE, and MAE inspectable.
+- `v04_entry_exit_signals.png` and `exposure_sizing.png` show the selected
+  exposure path visually.
+
 ## Next Research Steps
 
-1. Improve fallback variants so they keep the v0.3 turnover discipline.
-2. Compare cash with Treasury ETFs or explicit cash-yield assumptions.
-3. Expand regime analysis by bull, bear, and sideways markets.
-4. Add volatility targeting after the trend signal is stable.
-5. Only consider shorts after long-only robustness improves.
+1. Make fallback allocation slower and more selective so it does not recreate
+   the v0.2 turnover problem.
+2. Add an explicit cash-yield or Treasury-bill proxy, because long/cash models
+   are currently penalized as if cash earns zero.
+3. Improve upside capture before adding shorts. The model still exits too much
+   upside during strong AAPL regimes.
+4. Use regime diagnostics to tune risk filters by failure mode, especially bear
+   and recovery periods.
+5. Consider multi-signal confirmation only after the current long-only rules
+   produce a better capture spread.

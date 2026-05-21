@@ -13,7 +13,7 @@ from quant_backtest.reports import save_research_outputs
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run the trend allocation research framework.")
-    parser.add_argument("--config", default="configs/research_v3.yaml", help="Path to research YAML config.")
+    parser.add_argument("--config", default="configs/research_v4.yaml", help="Path to research YAML config.")
     parser.add_argument("--output-dir", default=None, help="Override output directory.")
     parser.add_argument("--fixture-data", action="store_true", help="Use deterministic synthetic data.")
     parser.add_argument("--no-download", action="store_true", help="Alias for --fixture-data for CI/smoke tests.")
@@ -31,7 +31,22 @@ def main() -> None:
     save_research_outputs(result, output_dir)
 
     print(f"Wrote research outputs to: {output_dir}")
-    print(result.model_leaderboard.head(10).to_string(index=False))
+    if not result.v04_comparison.empty:
+        columns = [
+            "model",
+            "selection_status",
+            "variant",
+            "cagr",
+            "sharpe",
+            "max_drawdown",
+            "turnover",
+            "upside_capture",
+            "downside_capture",
+            "capture_spread",
+        ]
+        print(result.v04_comparison[columns].to_string(index=False))
+    else:
+        print(result.model_leaderboard.head(10).to_string(index=False))
 
 
 if __name__ == "__main__":

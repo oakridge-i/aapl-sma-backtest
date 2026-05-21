@@ -14,22 +14,30 @@ from .data import default_end_date, download_adjusted_close
 from .engine import EngineConfig, run_weight_backtest
 from .metrics import (
     annualized_turnover,
+    avoided_downside_while_underweight,
     capture_ratio,
+    capture_spread,
     holding_periods,
     missed_return_while_underweight,
     summarize_performance,
     trade_frequency_per_year,
 )
 from .strategies import (
+    CaptureAwareAllocationParameters,
+    CaptureAwareTrendStrategy,
+    RiskFilterParameters,
     SmaCrossoverStrategy,
     SmaParameters,
     TrendAllocationParameters,
     TrendAllocationStrategy,
+    VolatilitySizingParameters,
+    build_capture_aware_weights,
     build_fallback_weights,
     build_hybrid_regime_weights,
     build_regime_fallback_weights,
     build_single_asset_weights,
     build_sma_regime,
+    classify_market_regime,
 )
 
 
@@ -71,6 +79,23 @@ class ResearchConfig:
     final_turnover_limit: float = 6.0
     market_regime_short_window: int = 50
     market_regime_long_window: int = 200
+    enable_capture_model: bool = False
+    capture_trend_candidates: int = 8
+    capture_risk_candidates: int = 20
+    capture_turnover_limit: float = 2.5
+    min_capture_spread: float = 0.10
+    min_upside_capture: float = 0.60
+    max_downside_capture: float = 0.50
+    max_drawdown_slippage: float = 0.03
+    target_volatilities: list[float] | None = None
+    volatility_windows: list[int] | None = None
+    max_realized_volatilities: list[float] | None = None
+    rolling_drawdown_thresholds: list[float] | None = None
+    sharp_loss_thresholds: list[float] | None = None
+    fallback_assets: list[str] | None = None
+    fallback_weights: list[float] | None = None
+    fallback_min_hold_days: list[int] | None = None
+    fallback_cooldown_days: list[int] | None = None
 
 
 @dataclass(frozen=True)
@@ -91,6 +116,14 @@ class ResearchResult:
     v03_comparison: pd.DataFrame
     v03_cost_sensitivity: pd.DataFrame
     v03_curve: pd.DataFrame
+    capture_leaderboard: pd.DataFrame
+    risk_filter_sweep: pd.DataFrame
+    regime_results: pd.DataFrame
+    trade_log: pd.DataFrame
+    benchmark_comparison: pd.DataFrame
+    v04_comparison: pd.DataFrame
+    v04_cost_sensitivity: pd.DataFrame
+    v04_curve: pd.DataFrame
 
 
 def load_research_config(path: Path) -> ResearchConfig:
@@ -104,6 +137,10 @@ def load_research_config(path: Path) -> ResearchConfig:
     hysteresis = raw.get("hysteresis", {})
     selection = raw.get("selection", {})
     market_regime = raw.get("market_regime", {})
+    capture_model = raw.get("capture_model", {})
+    risk_filters = raw.get("risk_filters", {})
+    volatility_sizing = raw.get("volatility_sizing", {})
+    fallback = raw.get("fallback", {})
     return ResearchConfig(
         start=str(period["start"]),
         end=None if period.get("end") in (None, "latest") else str(period["end"]),
@@ -130,6 +167,27 @@ def load_research_config(path: Path) -> ResearchConfig:
         final_turnover_limit=float(selection.get("final_turnover_limit", 6.0)),
         market_regime_short_window=int(market_regime.get("short_window", 50)),
         market_regime_long_window=int(market_regime.get("long_window", 200)),
+        enable_capture_model=bool(capture_model.get("enabled", False)),
+        capture_trend_candidates=int(capture_model.get("trend_candidates", 8)),
+        capture_risk_candidates=int(capture_model.get("risk_candidates", 20)),
+        capture_turnover_limit=float(selection.get("capture_turnover_limit", 2.5)),
+        min_capture_spread=float(selection.get("min_capture_spread", 0.10)),
+        min_upside_capture=float(selection.get("min_upside_capture", 0.60)),
+        max_downside_capture=float(selection.get("max_downside_capture", 0.50)),
+        max_drawdown_slippage=float(selection.get("max_drawdown_slippage", 0.03)),
+        target_volatilities=[float(value) for value in volatility_sizing.get("target_volatilities", [0.15, 0.20, 0.25])],
+        volatility_windows=[int(value) for value in volatility_sizing.get("windows", [20, 40, 60])],
+        max_realized_volatilities=[
+            float(value) for value in risk_filters.get("max_realized_volatilities", [0.35, 0.45])
+        ],
+        rolling_drawdown_thresholds=[
+            float(value) for value in risk_filters.get("rolling_drawdown_thresholds", [0.08, 0.12])
+        ],
+        sharp_loss_thresholds=[float(value) for value in risk_filters.get("sharp_loss_thresholds", [-0.06, -0.08])],
+        fallback_assets=[str(value).upper() for value in fallback.get("assets", ["cash", "SPY", "QQQ", "hybrid_QQQ"])],
+        fallback_weights=[float(value) for value in fallback.get("weights", [0.5, 0.75, 1.0])],
+        fallback_min_hold_days=[int(value) for value in fallback.get("min_hold_days", [0, 10])],
+        fallback_cooldown_days=[int(value) for value in fallback.get("cooldown_days", [0, 5])],
     )
 
 
@@ -165,6 +223,19 @@ def run_research(config: ResearchConfig, fixture_data: bool = False) -> Research
     turnover_analysis = run_turnover_analysis(allocation_leaderboard, leaderboard)
     v03_comparison, v03_curve = run_v03_comparison(prices, config, selected_model)
     v03_cost_sensitivity = run_v03_cost_sensitivity(prices, config, selected_model)
+    if config.enable_capture_model:
+        v04 = run_v04_research(prices, config, top_trend_candidates, selected_model)
+    else:
+        v04 = {
+            "capture_leaderboard": pd.DataFrame(),
+            "risk_filter_sweep": pd.DataFrame(),
+            "regime_results": pd.DataFrame(),
+            "trade_log": pd.DataFrame(),
+            "benchmark_comparison": pd.DataFrame(),
+            "v04_comparison": pd.DataFrame(),
+            "v04_cost_sensitivity": pd.DataFrame(),
+            "v04_curve": pd.DataFrame(),
+        }
 
     return ResearchResult(
         prices=prices,
@@ -183,6 +254,14 @@ def run_research(config: ResearchConfig, fixture_data: bool = False) -> Research
         v03_comparison=v03_comparison,
         v03_cost_sensitivity=v03_cost_sensitivity,
         v03_curve=v03_curve,
+        capture_leaderboard=v04["capture_leaderboard"],
+        risk_filter_sweep=v04["risk_filter_sweep"],
+        regime_results=v04["regime_results"],
+        trade_log=v04["trade_log"],
+        benchmark_comparison=v04["benchmark_comparison"],
+        v04_comparison=v04["v04_comparison"],
+        v04_cost_sensitivity=v04["v04_cost_sensitivity"],
+        v04_curve=v04["v04_curve"],
     )
 
 
@@ -549,6 +628,504 @@ def run_v03_cost_sensitivity(
     return pd.DataFrame(rows).sort_values("cost_bps").reset_index(drop=True)
 
 
+def run_v04_research(
+    prices: pd.DataFrame,
+    config: ResearchConfig,
+    trend_candidates: list[TrendAllocationParameters],
+    selected_v3_model: dict[str, Any],
+) -> dict[str, pd.DataFrame]:
+    train_prices = prices.loc[config.train_start : config.train_end]
+    test_prices = prices.loc[config.test_start : config.test_end or prices.index.max()]
+    risk_filter_sweep = run_risk_filter_sweep(train_prices, config, trend_candidates)
+    capture_params = capture_parameter_grid(config, risk_filter_sweep)
+
+    v3_test = evaluate_strategy(
+        prices=test_prices,
+        ticker=config.base_ticker,
+        params=selected_v3_model["params"],
+        variant=selected_v3_model["variant"],
+        cost_bps=10.0,
+        initial_capital=config.initial_capital,
+        label="selected_v3",
+        market_regime_short_window=config.market_regime_short_window,
+        market_regime_long_window=config.market_regime_long_window,
+    )
+    capture_leaderboard = run_capture_leaderboard(test_prices, config, capture_params, v3_test["row"])
+    selected_v4_model = select_capture_model(capture_leaderboard, config, v3_test["row"], selected_v3_model)
+    v04_comparison, v04_curve = run_v04_comparison(prices, config, selected_v3_model, selected_v4_model)
+    v04_cost_sensitivity = run_v04_cost_sensitivity(prices, config, selected_v4_model)
+    benchmark_comparison = run_benchmark_comparison(prices, config, selected_v3_model, selected_v4_model)
+
+    if not v04_curve.empty:
+        market_ticker = "SPY" if "SPY" in test_prices.columns else config.base_ticker
+        regimes = classify_market_regime(
+            test_prices[config.base_ticker],
+            test_prices[market_ticker],
+            config.market_regime_short_window,
+            config.market_regime_long_window,
+        )
+        v04_curve = v04_curve.copy()
+        v04_curve["regime"] = regimes.reindex(v04_curve.index).fillna("sideways")
+
+    return {
+        "capture_leaderboard": capture_leaderboard,
+        "risk_filter_sweep": risk_filter_sweep,
+        "regime_results": run_regime_results(v04_curve),
+        "trade_log": build_trade_log(v04_curve),
+        "benchmark_comparison": benchmark_comparison,
+        "v04_comparison": v04_comparison,
+        "v04_cost_sensitivity": v04_cost_sensitivity,
+        "v04_curve": v04_curve,
+    }
+
+
+def run_risk_filter_sweep(
+    prices: pd.DataFrame,
+    config: ResearchConfig,
+    trend_candidates: list[TrendAllocationParameters],
+) -> pd.DataFrame:
+    candidates = trend_candidates[: config.capture_trend_candidates] or [TrendAllocationParameters(5, 200)]
+    rows: list[dict[str, Any]] = []
+    for trend in candidates:
+        for vol_window in config.volatility_windows or [20, 40, 60]:
+            for target_vol in config.target_volatilities or [0.15, 0.20, 0.25]:
+                for max_vol in config.max_realized_volatilities or [0.35, 0.45]:
+                    for drawdown_threshold in config.rolling_drawdown_thresholds or [0.08, 0.12]:
+                        for sharp_loss in config.sharp_loss_thresholds or [-0.06, -0.08]:
+                            params = CaptureAwareAllocationParameters(
+                                trend=trend,
+                                risk=RiskFilterParameters(
+                                    rolling_drawdown_threshold=drawdown_threshold,
+                                    realized_volatility_window=vol_window,
+                                    max_realized_volatility=max_vol,
+                                    sharp_loss_threshold=sharp_loss,
+                                ),
+                                sizing=VolatilitySizingParameters(
+                                    realized_volatility_window=vol_window,
+                                    target_volatility=target_vol,
+                                ),
+                                fallback_asset="cash",
+                                fallback_weight=0.0,
+                            )
+                            result = evaluate_strategy(
+                                prices=prices,
+                                ticker=config.base_ticker,
+                                params=params,
+                                variant="capture_cash",
+                                cost_bps=10.0,
+                                initial_capital=config.initial_capital,
+                                label="capture_train",
+                                market_regime_short_window=config.market_regime_short_window,
+                                market_regime_long_window=config.market_regime_long_window,
+                            )
+                            rows.append(result["row"])
+    table = pd.DataFrame(rows)
+    if table.empty:
+        return table
+    table = add_capture_selection_score(table)
+    return table.sort_values("selection_score", ascending=False).reset_index(drop=True)
+
+
+def capture_parameter_grid(
+    config: ResearchConfig,
+    risk_filter_sweep: pd.DataFrame,
+) -> list[CaptureAwareAllocationParameters]:
+    if risk_filter_sweep.empty:
+        base_params = [
+            CaptureAwareAllocationParameters(
+                trend=TrendAllocationParameters(5, 200),
+                risk=RiskFilterParameters(),
+                sizing=VolatilitySizingParameters(),
+            )
+        ]
+    else:
+        base_params = [
+            capture_params_from_row(row)
+            for _, row in risk_filter_sweep.head(config.capture_risk_candidates).iterrows()
+        ]
+
+    params: list[CaptureAwareAllocationParameters] = []
+    for base in base_params:
+        for raw_asset in config.fallback_assets or ["cash", "SPY", "QQQ", "hybrid_QQQ"]:
+            asset = str(raw_asset).upper()
+            hybrid = asset.startswith("HYBRID_")
+            fallback_asset = asset.replace("HYBRID_", "")
+            if fallback_asset == "CASH":
+                params.append(
+                    CaptureAwareAllocationParameters(
+                        trend=base.trend,
+                        risk=base.risk,
+                        sizing=base.sizing,
+                        fallback_asset="cash",
+                        fallback_weight=0.0,
+                    )
+                )
+                continue
+            for weight in config.fallback_weights or [0.5, 0.75, 1.0]:
+                for min_hold in config.fallback_min_hold_days or [0, 10]:
+                    for cooldown in config.fallback_cooldown_days or [0, 5]:
+                        params.append(
+                            CaptureAwareAllocationParameters(
+                                trend=base.trend,
+                                risk=base.risk,
+                                sizing=base.sizing,
+                                fallback_asset=fallback_asset,
+                                fallback_weight=weight,
+                                fallback_min_hold_days=min_hold,
+                                fallback_cooldown_days=cooldown,
+                                hybrid_fallback=hybrid,
+                            )
+                        )
+    return list({param.label(): param for param in params}.values())
+
+
+def run_capture_leaderboard(
+    prices: pd.DataFrame,
+    config: ResearchConfig,
+    candidates: list[CaptureAwareAllocationParameters],
+    v3_row: dict[str, Any],
+) -> pd.DataFrame:
+    rows: list[dict[str, Any]] = []
+    for params in candidates:
+        variant = capture_variant(params)
+        result = evaluate_strategy(
+            prices=prices,
+            ticker=config.base_ticker,
+            params=params,
+            variant=variant,
+            cost_bps=10.0,
+            initial_capital=config.initial_capital,
+            label="capture_test",
+            market_regime_short_window=config.market_regime_short_window,
+            market_regime_long_window=config.market_regime_long_window,
+        )
+        stress = evaluate_strategy(
+            prices=prices,
+            ticker=config.base_ticker,
+            params=params,
+            variant=variant,
+            cost_bps=20.0,
+            initial_capital=config.initial_capital,
+            label="capture_test_20bps",
+            market_regime_short_window=config.market_regime_short_window,
+            market_regime_long_window=config.market_regime_long_window,
+        )
+        rows.append(
+            result["row"]
+            | {
+                "cagr_20bps": stress["row"]["cagr"],
+                "sharpe_20bps": stress["row"]["sharpe"],
+                "capture_spread_20bps": stress["row"]["capture_spread"],
+            }
+        )
+
+    table = pd.DataFrame(rows)
+    if table.empty:
+        return table
+    table = add_capture_selection_score(table)
+    table["robust_20bps"] = (
+        (table["cagr_20bps"] > 0)
+        & (table["sharpe_20bps"] > 0)
+        & (table["capture_spread_20bps"] > 0)
+    )
+    table["passes_selection"] = capture_selection_mask(table, config, v3_row)
+    return table.sort_values(["passes_selection", "selection_score"], ascending=[False, False]).reset_index(drop=True)
+
+
+def run_v04_comparison(
+    prices: pd.DataFrame,
+    config: ResearchConfig,
+    selected_v3_model: dict[str, Any],
+    selected_v4_model: dict[str, Any],
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    evaluation_prices = prices.loc[config.test_start : config.test_end or prices.index.max()]
+    scenarios: list[tuple[str, Any, str, str]] = [
+        ("baseline_sma_20_100", SmaParameters(20, 100), "long_cash", "comparison"),
+        ("v2_sma_5_50", SmaParameters(5, 50), "long_cash", "comparison"),
+        ("selected_v3", selected_v3_model["params"], selected_v3_model["variant"], selected_v3_model["selection_status"]),
+        ("selected_v4", selected_v4_model["params"], selected_v4_model["variant"], selected_v4_model["selection_status"]),
+    ]
+    rows = []
+    selected_curve = pd.DataFrame()
+    for model_label, params, variant, status in scenarios:
+        result = evaluate_strategy(
+            prices=evaluation_prices,
+            ticker=config.base_ticker,
+            params=params,
+            variant=variant,
+            cost_bps=10.0,
+            initial_capital=config.initial_capital,
+            label=model_label,
+            market_regime_short_window=config.market_regime_short_window,
+            market_regime_long_window=config.market_regime_long_window,
+        )
+        rows.append(result["row"] | {"model": model_label, "selection_status": status})
+        if model_label == "selected_v4":
+            selected_curve = result["curve"]
+    return pd.DataFrame(rows), selected_curve
+
+
+def run_v04_cost_sensitivity(
+    prices: pd.DataFrame,
+    config: ResearchConfig,
+    selected_v4_model: dict[str, Any],
+) -> pd.DataFrame:
+    evaluation_prices = prices.loc[config.test_start : config.test_end or prices.index.max()]
+    rows = []
+    for cost_bps in config.cost_bps:
+        result = evaluate_strategy(
+            prices=evaluation_prices,
+            ticker=config.base_ticker,
+            params=selected_v4_model["params"],
+            variant=selected_v4_model["variant"],
+            cost_bps=cost_bps,
+            initial_capital=config.initial_capital,
+            label="selected_v4",
+            market_regime_short_window=config.market_regime_short_window,
+            market_regime_long_window=config.market_regime_long_window,
+        )
+        rows.append(result["row"] | {"selection_status": selected_v4_model["selection_status"]})
+    return pd.DataFrame(rows).sort_values("cost_bps").reset_index(drop=True)
+
+
+def run_benchmark_comparison(
+    prices: pd.DataFrame,
+    config: ResearchConfig,
+    selected_v3_model: dict[str, Any],
+    selected_v4_model: dict[str, Any],
+) -> pd.DataFrame:
+    evaluation_prices = prices.loc[config.test_start : config.test_end or prices.index.max()]
+    rows = []
+    for ticker in [config.base_ticker, "SPY", "QQQ"]:
+        if ticker in evaluation_prices.columns:
+            rows.append(_buy_hold_benchmark_row(evaluation_prices[ticker], config.initial_capital, ticker))
+    if {config.base_ticker, "QQQ"}.issubset(evaluation_prices.columns):
+        blend_return = evaluation_prices[[config.base_ticker, "QQQ"]].pct_change().fillna(0.0).mean(axis=1)
+        blend_equity = config.initial_capital * (1.0 + blend_return).cumprod()
+        rows.append(
+            summarize_performance("50_50_aapl_qqq", blend_equity, blend_return)
+            | {"ticker": "AAPL_QQQ", "model": "50% AAPL / 50% QQQ", "variant": "static_blend"}
+        )
+    rows.append(
+        evaluate_strategy(
+            evaluation_prices,
+            config.base_ticker,
+            SmaParameters(1, 200),
+            "long_cash",
+            10.0,
+            config.initial_capital,
+            "aapl_sma200_filter",
+        )["row"]
+        | {"model": "AAPL SMA200 filter"}
+    )
+    for model, selected in [("selected_v3", selected_v3_model), ("selected_v4", selected_v4_model)]:
+        rows.append(
+            evaluate_strategy(
+                evaluation_prices,
+                config.base_ticker,
+                selected["params"],
+                selected["variant"],
+                10.0,
+                config.initial_capital,
+                model,
+                config.market_regime_short_window,
+                config.market_regime_long_window,
+            )["row"]
+            | {"model": model, "selection_status": selected["selection_status"]}
+        )
+    return pd.DataFrame(rows)
+
+
+def run_regime_results(curve: pd.DataFrame) -> pd.DataFrame:
+    if curve.empty or "regime" not in curve.columns:
+        return pd.DataFrame()
+    rows = []
+    for regime, group in curve.groupby("regime"):
+        if group.empty:
+            continue
+        upside = capture_ratio(group["strategy_return"], group["buy_hold_return"], "up")
+        downside = capture_ratio(group["strategy_return"], group["buy_hold_return"], "down")
+        rows.append(
+            {
+                "regime": regime,
+                "days": int(len(group)),
+                "strategy_return": float((1.0 + group["strategy_return"]).prod() - 1.0),
+                "benchmark_return": float((1.0 + group["buy_hold_return"]).prod() - 1.0),
+                "upside_capture": upside,
+                "downside_capture": downside,
+                "capture_spread": capture_spread(upside, downside),
+                "average_exposure": float(group["position"].abs().mean()) if "position" in group else np.nan,
+                "fallback_exposure": float(group["fallback_position"].abs().mean())
+                if "fallback_position" in group
+                else np.nan,
+            }
+        )
+    return pd.DataFrame(rows).sort_values("regime").reset_index(drop=True)
+
+
+def build_trade_log(curve: pd.DataFrame) -> pd.DataFrame:
+    if curve.empty or "position" not in curve.columns:
+        return pd.DataFrame()
+
+    rows: list[dict[str, Any]] = []
+    in_trade = False
+    entry_date = None
+    previous_date = None
+    for date, row in curve.iterrows():
+        exposed = float(row.get("position", 0.0) or 0.0) > 0.0
+        if exposed and not in_trade:
+            entry_date = date
+            in_trade = True
+        elif in_trade and not exposed and entry_date is not None:
+            rows.append(_trade_log_row(curve, entry_date, date, "closed"))
+            in_trade = False
+            entry_date = None
+        previous_date = date
+    if in_trade and entry_date is not None and previous_date is not None:
+        rows.append(_trade_log_row(curve, entry_date, previous_date, "open"))
+    return pd.DataFrame(rows)
+
+
+def select_capture_model(
+    table: pd.DataFrame,
+    config: ResearchConfig,
+    v3_row: dict[str, Any],
+    selected_v3_model: dict[str, Any],
+) -> dict[str, Any]:
+    if not table.empty:
+        passing = table[table["passes_selection"]]
+        if not passing.empty:
+            best = passing.sort_values("selection_score", ascending=False).iloc[0]
+            return {
+                "params": capture_params_from_row(best),
+                "variant": str(best["variant"]),
+                "selection_status": "selected_v4",
+            }
+    return {
+        "params": selected_v3_model["params"],
+        "variant": selected_v3_model["variant"],
+        "selection_status": "no_robust_upgrade_baseline_retained",
+    }
+
+
+def add_capture_selection_score(table: pd.DataFrame) -> pd.DataFrame:
+    if table.empty:
+        return table
+    enriched = table.copy()
+    if "capture_spread" not in enriched.columns:
+        enriched["capture_spread"] = enriched.apply(
+            lambda row: capture_spread(float(row["upside_capture"]), float(row["downside_capture"])),
+            axis=1,
+        )
+    hot_pixel = enriched.get("hot_pixel_risk", pd.Series(0.0, index=enriched.index)).fillna(0.0).clip(lower=0.0)
+    enriched["selection_score"] = (
+        enriched["sharpe"].fillna(0.0)
+        + enriched["cagr"].fillna(0.0)
+        + 1.50 * enriched["capture_spread"].fillna(0.0)
+        - 0.75 * enriched["downside_capture"].fillna(0.0).clip(lower=0.0)
+        - 0.04 * enriched["turnover"].fillna(0.0)
+        + 0.50 * enriched["drawdown_improvement_vs_benchmark"].fillna(0.0)
+        - 0.25 * hot_pixel
+    )
+    return enriched
+
+
+def capture_selection_mask(table: pd.DataFrame, config: ResearchConfig, v3_row: dict[str, Any]) -> pd.Series:
+    v3_cagr = float(v3_row.get("cagr", 0.0) or 0.0)
+    v3_sharpe = float(v3_row.get("sharpe", 0.0) or 0.0)
+    v3_drawdown = float(v3_row.get("max_drawdown", -1.0) or -1.0)
+    return (
+        (table["cagr"] > v3_cagr)
+        & (table["sharpe"] > v3_sharpe)
+        & (table["turnover"] <= config.capture_turnover_limit)
+        & (table["max_drawdown"] >= v3_drawdown - config.max_drawdown_slippage)
+        & (table["upside_capture"] >= config.min_upside_capture)
+        & (table["downside_capture"] <= config.max_downside_capture)
+        & (table["capture_spread"] >= config.min_capture_spread)
+        & table["robust_20bps"]
+    )
+
+
+def capture_params_from_row(row: pd.Series) -> CaptureAwareAllocationParameters:
+    fallback_asset = _row_value(row, "fallback_asset", "cash")
+    return CaptureAwareAllocationParameters(
+        trend=trend_params_from_row(row),
+        risk=RiskFilterParameters(
+            price_sma_window=int(_row_value(row, "risk_price_sma_window", 200)),
+            rolling_drawdown_threshold=float(_row_value(row, "risk_drawdown_threshold", 0.10)),
+            realized_volatility_window=int(_row_value(row, "risk_volatility_window", 20)),
+            max_realized_volatility=float(_row_value(row, "risk_max_realized_volatility", 0.45)),
+            sharp_loss_threshold=float(_row_value(row, "risk_sharp_loss_threshold", -0.08)),
+        ),
+        sizing=VolatilitySizingParameters(
+            realized_volatility_window=int(_row_value(row, "sizing_window", 20)),
+            target_volatility=float(_row_value(row, "target_volatility", 0.20)),
+        ),
+        fallback_asset=str(fallback_asset),
+        fallback_weight=float(_row_value(row, "fallback_weight", 0.0)),
+        fallback_min_hold_days=int(_row_value(row, "fallback_min_hold_days", 0)),
+        fallback_cooldown_days=int(_row_value(row, "fallback_cooldown_days", 0)),
+        hybrid_fallback=bool(_row_value(row, "hybrid_fallback", False)),
+    )
+
+
+def capture_variant(params: CaptureAwareAllocationParameters) -> str:
+    fallback = params.fallback_asset.lower()
+    if fallback == "cash" or params.fallback_weight <= 0:
+        return "capture_cash"
+    prefix = "capture_hybrid" if params.hybrid_fallback else "capture_fallback"
+    return f"{prefix}_{fallback}_regime"
+
+
+def _buy_hold_benchmark_row(price: pd.Series, initial_capital: float, ticker: str) -> dict[str, Any]:
+    returns = price.pct_change().fillna(0.0)
+    equity = initial_capital * (1.0 + returns).cumprod()
+    return summarize_performance(f"{ticker}_buy_hold", equity, returns) | {
+        "ticker": ticker,
+        "model": f"{ticker} buy and hold",
+        "variant": "buy_hold",
+    }
+
+
+def _trade_log_row(curve: pd.DataFrame, entry_date, exit_date, status: str) -> dict[str, Any]:
+    trade = curve.loc[entry_date:exit_date]
+    entry_price = float(trade["price"].iloc[0])
+    exit_price = float(trade["price"].iloc[-1])
+    price_path = trade["price"] / entry_price - 1.0
+    return {
+        "entry_date": pd.Timestamp(entry_date).date().isoformat(),
+        "exit_date": pd.Timestamp(exit_date).date().isoformat(),
+        "status": status,
+        "entry_price": entry_price,
+        "exit_price": exit_price,
+        "holding_days": int(len(trade)),
+        "trade_return": float((1.0 + trade["strategy_return"]).prod() - 1.0),
+        "max_favorable_excursion": float(price_path.max()),
+        "max_adverse_excursion": float(price_path.min()),
+        "regime_at_entry": str(trade["regime"].iloc[0]) if "regime" in trade else "",
+        "volatility_at_entry": float(trade["realized_volatility"].iloc[0])
+        if "realized_volatility" in trade and pd.notna(trade["realized_volatility"].iloc[0])
+        else np.nan,
+        "trend_spread_at_entry": float(trade["spread"].iloc[0])
+        if "spread" in trade and pd.notna(trade["spread"].iloc[0])
+        else np.nan,
+    }
+
+
+def _capture_fallback_ticker(params: CaptureAwareAllocationParameters) -> str | None:
+    fallback = params.fallback_asset.upper()
+    if fallback in {"", "CASH"} or params.fallback_weight <= 0:
+        return None
+    return fallback
+
+
+def _row_value(row: pd.Series, key: str, default):
+    value = row.get(key, default)
+    if pd.isna(value):
+        return default
+    return value
+
+
 def select_top_trend_candidates(table: pd.DataFrame, config: ResearchConfig) -> list[TrendAllocationParameters]:
     if table.empty:
         return [TrendAllocationParameters(5, 50)]
@@ -649,7 +1226,7 @@ def trend_params_from_row(row: pd.Series) -> TrendAllocationParameters:
 def evaluate_strategy(
     prices: pd.DataFrame,
     ticker: str,
-    params: SmaParameters | TrendAllocationParameters,
+    params: SmaParameters | TrendAllocationParameters | CaptureAwareAllocationParameters,
     variant: str,
     cost_bps: float,
     initial_capital: float,
@@ -662,37 +1239,68 @@ def evaluate_strategy(
         raise ValueError(f"Missing ticker in price data: {ticker}")
 
     needed = [ticker]
-    if variant in {"fallback_spy", "long_spy_regime", "hybrid_spy_regime"}:
+    capture_fallback = _capture_fallback_ticker(params) if isinstance(params, CaptureAwareAllocationParameters) else None
+    if variant in {"fallback_spy", "long_spy_regime", "hybrid_spy_regime"} or capture_fallback == "SPY":
         needed.append("SPY")
-    if variant in {"fallback_qqq", "long_qqq_regime", "hybrid_qqq_regime"}:
+    if variant in {"fallback_qqq", "long_qqq_regime", "hybrid_qqq_regime"} or capture_fallback == "QQQ":
         needed.append("QQQ")
     needed = list(dict.fromkeys(needed))
     available = [column for column in needed if column in prices.columns]
 
     price = prices[ticker].dropna()
-    if isinstance(params, TrendAllocationParameters):
+    if isinstance(params, CaptureAwareAllocationParameters):
+        fallback_ticker = capture_fallback if capture_fallback in prices.columns else None
+        market_ticker = fallback_ticker or ("SPY" if "SPY" in prices.columns else "QQQ" if "QQQ" in prices.columns else None)
+        market_risk_off = None
+        if params.risk.use_market_sma_filter and market_ticker:
+            market_regime = build_sma_regime(
+                prices[market_ticker],
+                market_regime_short_window,
+                market_regime_long_window,
+            )
+            market_risk_off = ~market_regime
+        fallback_regime = None
+        if fallback_ticker:
+            fallback_regime = build_sma_regime(
+                prices[fallback_ticker],
+                market_regime_short_window,
+                market_regime_long_window,
+            )
+        signals = CaptureAwareTrendStrategy(params).generate(
+            price,
+            market_risk_off=market_risk_off,
+            fallback_regime=fallback_regime,
+        )
+        weights = build_capture_aware_weights(ticker, signals, fallback_ticker)
+        available = [column for column in weights.columns if column in prices.columns]
+    elif isinstance(params, TrendAllocationParameters):
         signals = TrendAllocationStrategy(params).generate(price)
+        if variant == "fallback_spy" and "SPY" in prices.columns:
+            weights = build_fallback_weights(ticker, "SPY", signals.target_position)
+        elif variant == "fallback_qqq" and "QQQ" in prices.columns:
+            weights = build_fallback_weights(ticker, "QQQ", signals.target_position)
+        elif variant == "long_spy_regime" and "SPY" in prices.columns:
+            regime = build_sma_regime(prices["SPY"], market_regime_short_window, market_regime_long_window)
+            weights = build_regime_fallback_weights(ticker, "SPY", signals.target_position, regime)
+        elif variant == "long_qqq_regime" and "QQQ" in prices.columns:
+            regime = build_sma_regime(prices["QQQ"], market_regime_short_window, market_regime_long_window)
+            weights = build_regime_fallback_weights(ticker, "QQQ", signals.target_position, regime)
+        elif variant == "hybrid_spy_regime" and "SPY" in prices.columns:
+            regime = build_sma_regime(prices["SPY"], market_regime_short_window, market_regime_long_window)
+            weights = build_hybrid_regime_weights(ticker, "SPY", signals, params, regime)
+        elif variant == "hybrid_qqq_regime" and "QQQ" in prices.columns:
+            regime = build_sma_regime(prices["QQQ"], market_regime_short_window, market_regime_long_window)
+            weights = build_hybrid_regime_weights(ticker, "QQQ", signals, params, regime)
+        else:
+            weights = build_single_asset_weights(ticker, signals.target_position)
     else:
         signals = SmaCrossoverStrategy(params).generate(price)
-
-    if variant == "fallback_spy" and "SPY" in prices.columns:
-        weights = build_fallback_weights(ticker, "SPY", signals.target_position)
-    elif variant == "fallback_qqq" and "QQQ" in prices.columns:
-        weights = build_fallback_weights(ticker, "QQQ", signals.target_position)
-    elif variant == "long_spy_regime" and "SPY" in prices.columns:
-        regime = build_sma_regime(prices["SPY"], market_regime_short_window, market_regime_long_window)
-        weights = build_regime_fallback_weights(ticker, "SPY", signals.target_position, regime)
-    elif variant == "long_qqq_regime" and "QQQ" in prices.columns:
-        regime = build_sma_regime(prices["QQQ"], market_regime_short_window, market_regime_long_window)
-        weights = build_regime_fallback_weights(ticker, "QQQ", signals.target_position, regime)
-    elif variant == "hybrid_spy_regime" and isinstance(params, TrendAllocationParameters) and "SPY" in prices.columns:
-        regime = build_sma_regime(prices["SPY"], market_regime_short_window, market_regime_long_window)
-        weights = build_hybrid_regime_weights(ticker, "SPY", signals, params, regime)
-    elif variant == "hybrid_qqq_regime" and isinstance(params, TrendAllocationParameters) and "QQQ" in prices.columns:
-        regime = build_sma_regime(prices["QQQ"], market_regime_short_window, market_regime_long_window)
-        weights = build_hybrid_regime_weights(ticker, "QQQ", signals, params, regime)
-    else:
-        weights = build_single_asset_weights(ticker, signals.target_position)
+        if variant == "fallback_spy" and "SPY" in prices.columns:
+            weights = build_fallback_weights(ticker, "SPY", signals.target_position)
+        elif variant == "fallback_qqq" and "QQQ" in prices.columns:
+            weights = build_fallback_weights(ticker, "QQQ", signals.target_position)
+        else:
+            weights = build_single_asset_weights(ticker, signals.target_position)
 
     returns = prices[available].pct_change().fillna(0.0)
     engine_result = run_weight_backtest(
@@ -769,7 +1377,7 @@ def summarize_curve(
     ticker: str,
     label: str,
     variant: str,
-    params: SmaParameters | TrendAllocationParameters,
+    params: SmaParameters | TrendAllocationParameters | CaptureAwareAllocationParameters,
     cost_bps: float,
 ) -> dict[str, Any]:
     closed = calculate_closed_trade_returns(curve["strategy_return"], executed_weights.abs().sum(axis=1))
@@ -782,6 +1390,10 @@ def summarize_curve(
     )
     holds = holding_periods(ticker_weight)
     trade_count = int((curve["turnover"] > 0).sum())
+    upside = capture_ratio(curve["strategy_return"], curve["buy_hold_return"], "up")
+    downside = capture_ratio(curve["strategy_return"], curve["buy_hold_return"], "down")
+    risk = getattr(params, "risk", None)
+    sizing = getattr(params, "sizing", None)
     row = summarize_performance(
         name=f"{ticker}_{variant}_{params.label()}_{cost_bps:g}bps",
         equity=curve["strategy_equity"],
@@ -812,13 +1424,31 @@ def summarize_curve(
         "benchmark_cagr": benchmark_metrics["cagr"],
         "benchmark_sharpe": benchmark_metrics["sharpe"],
         "benchmark_max_drawdown": benchmark_metrics["max_drawdown"],
-        "upside_capture": capture_ratio(curve["strategy_return"], curve["buy_hold_return"], "up"),
-        "downside_capture": capture_ratio(curve["strategy_return"], curve["buy_hold_return"], "down"),
+        "upside_capture": upside,
+        "downside_capture": downside,
+        "capture_spread": capture_spread(upside, downside),
         "missed_return_while_in_cash": missed_return_while_underweight(curve["buy_hold_return"], ticker_weight),
+        "avoided_downside_while_out": avoided_downside_while_underweight(curve["buy_hold_return"], ticker_weight),
         "average_holding_days": float(holds.mean()) if not holds.empty else np.nan,
         "median_holding_days": float(holds.median()) if not holds.empty else np.nan,
         "trade_frequency_per_year": trade_frequency_per_year(trade_count, curve.index),
         "fallback_exposure": fallback_exposure,
+        "average_target_exposure": float(ticker_weight.abs().mean()),
+        "volatility_adjusted_exposure": float(curve["volatility_weight"].mean())
+        if "volatility_weight" in curve.columns
+        else np.nan,
+        "risk_price_sma_window": getattr(risk, "price_sma_window", np.nan),
+        "risk_drawdown_threshold": getattr(risk, "rolling_drawdown_threshold", np.nan),
+        "risk_volatility_window": getattr(risk, "realized_volatility_window", np.nan),
+        "risk_max_realized_volatility": getattr(risk, "max_realized_volatility", np.nan),
+        "risk_sharp_loss_threshold": getattr(risk, "sharp_loss_threshold", np.nan),
+        "target_volatility": getattr(sizing, "target_volatility", np.nan),
+        "sizing_window": getattr(sizing, "realized_volatility_window", np.nan),
+        "fallback_asset": getattr(params, "fallback_asset", "cash"),
+        "fallback_weight": getattr(params, "fallback_weight", 0.0),
+        "fallback_min_hold_days": getattr(params, "fallback_min_hold_days", 0),
+        "fallback_cooldown_days": getattr(params, "fallback_cooldown_days", 0),
+        "hybrid_fallback": getattr(params, "hybrid_fallback", False),
     }
 
 
@@ -903,6 +1533,18 @@ def _combine_curve(
     curve["fallback_position"] = (
         executed_weights[fallback_columns].abs().sum(axis=1) if fallback_columns else 0.0
     )
+    for column in [
+        "trend_position",
+        "risk_off",
+        "volatility_weight",
+        "realized_volatility",
+        "price_sma",
+        "rolling_drawdown",
+        "sharp_loss",
+        "fallback_target",
+    ]:
+        if hasattr(signals, column):
+            curve[column] = getattr(signals, column).reindex(curve.index)
     curve["buy_hold_return"] = prices[ticker].pct_change().reindex(curve.index).fillna(0.0)
     curve["buy_hold_equity"] = engine_curve["strategy_equity"].iloc[0] * (1.0 + curve["buy_hold_return"]).cumprod()
     curve["buy_hold_drawdown"] = curve["buy_hold_equity"] / curve["buy_hold_equity"].cummax() - 1.0

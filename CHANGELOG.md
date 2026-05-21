@@ -2,6 +2,58 @@
 
 All notable project changes are documented here.
 
+## 0.4.0 - Capture-Aware Risk Model
+
+### Added
+
+- `CaptureAwareTrendStrategy`, combining trend allocation, downside risk
+  filters, volatility-based sizing, and fallback allocation.
+- Capture-aware selection fields, including `capture_spread` and a selection
+  score that rewards upside/downside capture separation.
+- Downside filters for price below SMA, market below SMA, rolling drawdown,
+  realized volatility, and sharp 20-day losses.
+- Long-only volatility sizing with exposure capped at `100%`.
+- Fallback variants that only allocate to SPY or QQQ in a positive market
+  regime, with fallback weights, minimum hold, and cooldown settings.
+- Regime classification for bull, correction, bear, recovery, and sideways
+  periods.
+- Trade log with entry/exit dates, holding days, trade return, MFE, MAE, entry
+  regime, entry volatility, and trend spread.
+- `configs/research_v4.yaml` as the default research configuration.
+- New research outputs:
+  - `capture_leaderboard.csv`;
+  - `risk_filter_sweep.csv`;
+  - `regime_results.csv`;
+  - `trade_log.csv`;
+  - `benchmark_comparison.csv`;
+  - `v04_comparison.csv`;
+  - `v04_cost_sensitivity.csv`;
+  - `v04_selected_curve.csv`.
+- New charts for v0.4 equity/drawdown, entries/exits, capture profile, regime
+  performance, turnover vs capture spread, and exposure sizing.
+
+### Changed
+
+- `research.py` now defaults to `configs/research_v4.yaml`.
+- The report workbook now includes v0.4 sheets for capture, risk filters,
+  regimes, trade logs, benchmarks, and v0.4 cost sensitivity.
+- Model selection can explicitly retain the v0.3 baseline when no v0.4
+  candidate passes the robustness filters.
+- `research_v2.yaml` and `research_v3.yaml` remain runnable for compatibility.
+
+### Findings
+
+- The v0.4 search did not produce a robust upgrade under the configured hard
+  filters.
+- The best capture-aware candidates improved test CAGR, Sharpe, and drawdown,
+  but required high turnover and did not reach the upside capture target.
+- The selected output is therefore `no_robust_upgrade_baseline_retained`, using
+  the v0.3 `SMA 5/200` long/cash hysteresis model.
+- On the test period through `2026-05-19`, the retained model has CAGR `11.00%`,
+  Sharpe `0.66`, max drawdown `-23.62%`, turnover `1.68`, upside capture
+  `54.48%`, downside capture `53.61%`, and capture spread `0.87` percentage
+  points.
+
 ## 0.3.0 - Turnover-Aware Trend Allocation
 
 ### Added

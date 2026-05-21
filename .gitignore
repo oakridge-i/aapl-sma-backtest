@@ -1,6 +1,7 @@
 .venv/
 .cache/
 .idea/
+.vscode/
 node_modules/
 __pycache__/
 *.py[cod]
@@ -10,6 +11,7 @@ outputs/dashboard_preview.png
 outputs_fixture/
 outputs_fixture_v2/
 outputs_fixture_v3/
+outputs_fixture_v4/
 outputs_smoke/
 .pytest_tmp/
 .DS_Store

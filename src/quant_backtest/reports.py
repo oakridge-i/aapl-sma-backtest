@@ -31,6 +31,13 @@ CSV_OUTPUTS = {
     "turnover_analysis.csv": "turnover_analysis",
     "v03_comparison.csv": "v03_comparison",
     "v03_cost_sensitivity.csv": "v03_cost_sensitivity",
+    "capture_leaderboard.csv": "capture_leaderboard",
+    "risk_filter_sweep.csv": "risk_filter_sweep",
+    "regime_results.csv": "regime_results",
+    "trade_log.csv": "trade_log",
+    "benchmark_comparison.csv": "benchmark_comparison",
+    "v04_comparison.csv": "v04_comparison",
+    "v04_cost_sensitivity.csv": "v04_cost_sensitivity",
 }
 
 
@@ -50,6 +57,14 @@ def save_research_outputs(result: ResearchResult, output_dir: Path) -> None:
     result.v03_comparison.to_csv(output_dir / "v03_comparison.csv", index=False)
     result.v03_cost_sensitivity.to_csv(output_dir / "v03_cost_sensitivity.csv", index=False)
     result.v03_curve.to_csv(output_dir / "v03_selected_curve.csv", index_label="Date")
+    result.capture_leaderboard.to_csv(output_dir / "capture_leaderboard.csv", index=False)
+    result.risk_filter_sweep.to_csv(output_dir / "risk_filter_sweep.csv", index=False)
+    result.regime_results.to_csv(output_dir / "regime_results.csv", index=False)
+    result.trade_log.to_csv(output_dir / "trade_log.csv", index=False)
+    result.benchmark_comparison.to_csv(output_dir / "benchmark_comparison.csv", index=False)
+    result.v04_comparison.to_csv(output_dir / "v04_comparison.csv", index=False)
+    result.v04_cost_sensitivity.to_csv(output_dir / "v04_cost_sensitivity.csv", index=False)
+    result.v04_curve.to_csv(output_dir / "v04_selected_curve.csv", index_label="Date")
 
     save_research_plots(result, output_dir)
     save_research_workbook(result, output_dir / "research_report.xlsx")
@@ -79,6 +94,12 @@ def save_research_plots(result: ResearchResult, output_dir: Path) -> None:
     _plot_allocation_exposure(result.v03_curve, output_dir / "allocation_exposure.png")
     _plot_v03_cost_sensitivity(result.v03_cost_sensitivity, output_dir / "v03_cost_sensitivity.png")
     _plot_v03_entry_exit_signals(result.v03_curve, output_dir / "v03_entry_exit_signals.png")
+    _plot_v04_equity_drawdown(result.v04_curve, output_dir / "v04_equity_drawdown.png")
+    _plot_v04_entry_exit_signals(result.v04_curve, output_dir / "v04_entry_exit_signals.png")
+    _plot_v04_capture(result.v04_comparison, output_dir / "v04_capture_chart.png")
+    _plot_regime_performance(result.regime_results, output_dir / "regime_performance.png")
+    _plot_turnover_capture_spread(result.capture_leaderboard, output_dir / "turnover_capture_spread.png")
+    _plot_exposure_sizing(result.v04_curve, output_dir / "exposure_sizing.png")
 
 
 def save_research_workbook(result: ResearchResult, output_path: Path) -> None:
@@ -99,6 +120,13 @@ def save_research_workbook(result: ResearchResult, output_path: Path) -> None:
         "Turnover Analysis": result.turnover_analysis,
         "v0.3 Comparison": result.v03_comparison,
         "v0.3 Costs": result.v03_cost_sensitivity,
+        "Capture Leaderboard": result.capture_leaderboard,
+        "Risk Filter Sweep": result.risk_filter_sweep,
+        "Regime Results": result.regime_results,
+        "Trade Log": result.trade_log,
+        "Benchmark Comparison": result.benchmark_comparison,
+        "v0.4 Comparison": result.v04_comparison,
+        "v0.4 Costs": result.v04_cost_sensitivity,
         "Raw Results": _raw_results(result),
     }
 
@@ -300,6 +328,133 @@ def _plot_v03_entry_exit_signals(curve: pd.DataFrame, output_path: Path) -> None
     plt.close(fig)
 
 
+def _plot_v04_equity_drawdown(curve: pd.DataFrame, output_path: Path) -> None:
+    if curve.empty:
+        return
+    fig, axes = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
+    axes[0].plot(curve.index, curve["strategy_equity"], label="selected v0.4 / retained baseline")
+    axes[0].plot(curve.index, curve["buy_hold_equity"], label="AAPL buy and hold")
+    axes[0].set_title("v0.4 selected model equity")
+    axes[0].grid(alpha=0.25)
+    axes[0].legend()
+    axes[1].plot(curve.index, curve["strategy_drawdown"], label="model drawdown")
+    axes[1].plot(curve.index, curve["buy_hold_drawdown"], label="AAPL drawdown")
+    axes[1].set_title("v0.4 selected model drawdown")
+    axes[1].grid(alpha=0.25)
+    axes[1].legend()
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=150)
+    plt.close(fig)
+
+
+def _plot_v04_entry_exit_signals(curve: pd.DataFrame, output_path: Path) -> None:
+    if curve.empty or "price" not in curve.columns or "position" not in curve.columns:
+        return
+
+    position_change = curve["position"].diff().fillna(curve["position"])
+    entries = curve[position_change > 0]
+    exits = curve[position_change < 0]
+
+    fig, axes = plt.subplots(3, 1, figsize=(13, 9), sharex=True, height_ratios=[3, 1, 1])
+    axes[0].plot(curve.index, curve["price"], label="AAPL price", color="#111827", linewidth=1.4)
+    if "short_sma" in curve.columns:
+        axes[0].plot(curve.index, curve["short_sma"], label="Short SMA", color="#2563EB", linewidth=1.0)
+    if "long_sma" in curve.columns:
+        axes[0].plot(curve.index, curve["long_sma"], label="Long SMA", color="#F59E0B", linewidth=1.0)
+    if "price_sma" in curve.columns:
+        axes[0].plot(curve.index, curve["price_sma"], label="Risk SMA", color="#64748B", linewidth=1.0)
+    axes[0].scatter(entries.index, entries["price"], marker="^", s=80, color="#16A34A", label="Entry", zorder=5)
+    axes[0].scatter(exits.index, exits["price"], marker="v", s=80, color="#DC2626", label="Exit", zorder=5)
+    axes[0].set_title("v0.4 model: AAPL entries, exits, and risk filter")
+    axes[0].grid(alpha=0.25)
+    axes[0].legend(loc="upper left", ncols=4)
+
+    axes[1].step(curve.index, curve["position"], where="post", label="AAPL exposure", color="#2563EB")
+    if "fallback_position" in curve.columns:
+        axes[1].step(curve.index, curve["fallback_position"], where="post", label="Fallback exposure", color="#7C3AED")
+    axes[1].set_ylim(-0.05, 1.05)
+    axes[1].set_ylabel("Weight")
+    axes[1].grid(alpha=0.25)
+    axes[1].legend(loc="upper left")
+
+    if "risk_off" in curve.columns:
+        axes[2].fill_between(
+            curve.index,
+            curve["risk_off"].fillna(False).astype(float),
+            step="post",
+            color="#DC2626",
+            alpha=0.25,
+            label="Risk off",
+        )
+    if "volatility_weight" in curve.columns:
+        axes[2].plot(curve.index, curve["volatility_weight"], color="#0F766E", label="Volatility weight")
+    axes[2].set_ylim(-0.05, 1.05)
+    axes[2].set_ylabel("Risk")
+    axes[2].grid(alpha=0.25)
+    if axes[2].get_legend_handles_labels()[0]:
+        axes[2].legend(loc="upper left")
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=150)
+    plt.close(fig)
+
+
+def _plot_v04_capture(table: pd.DataFrame, output_path: Path) -> None:
+    if table.empty or not {"model", "upside_capture", "downside_capture"}.issubset(table.columns):
+        return
+    fig, axis = plt.subplots(figsize=(10, 6))
+    table.plot(kind="bar", x="model", y=["upside_capture", "downside_capture", "capture_spread"], ax=axis)
+    axis.set_title("v0.4 capture profile")
+    axis.grid(alpha=0.25, axis="y")
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=150)
+    plt.close(fig)
+
+
+def _plot_regime_performance(table: pd.DataFrame, output_path: Path) -> None:
+    if table.empty or "regime" not in table.columns:
+        return
+    fig, axis = plt.subplots(figsize=(10, 6))
+    table.plot(kind="bar", x="regime", y=["strategy_return", "benchmark_return"], ax=axis)
+    axis.set_title("Performance by market regime")
+    axis.grid(alpha=0.25, axis="y")
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=150)
+    plt.close(fig)
+
+
+def _plot_turnover_capture_spread(table: pd.DataFrame, output_path: Path) -> None:
+    if table.empty or not {"turnover", "capture_spread"}.issubset(table.columns):
+        return
+    fig, axis = plt.subplots(figsize=(10, 6))
+    scatter = axis.scatter(table["turnover"], table["capture_spread"], c=table["sharpe"], cmap="viridis", alpha=0.75)
+    axis.set_title("Turnover vs capture spread")
+    axis.set_xlabel("Annualized turnover")
+    axis.set_ylabel("Upside capture - downside capture")
+    axis.grid(alpha=0.25)
+    fig.colorbar(scatter, ax=axis, label="Sharpe")
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=150)
+    plt.close(fig)
+
+
+def _plot_exposure_sizing(curve: pd.DataFrame, output_path: Path) -> None:
+    if curve.empty or "position" not in curve.columns:
+        return
+    fig, axis = plt.subplots(figsize=(12, 5))
+    axis.plot(curve.index, curve["position"], label="AAPL exposure", color="#2563EB")
+    if "fallback_position" in curve.columns:
+        axis.plot(curve.index, curve["fallback_position"], label="Fallback exposure", color="#7C3AED")
+    if "volatility_weight" in curve.columns:
+        axis.plot(curve.index, curve["volatility_weight"], label="Volatility cap", color="#0F766E", alpha=0.8)
+    axis.set_title("v0.4 exposure sizing")
+    axis.set_ylim(-0.05, 1.05)
+    axis.grid(alpha=0.25)
+    axis.legend()
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=150)
+    plt.close(fig)
+
+
 def _write_dashboard(sheet, result: ResearchResult) -> None:
     sheet.sheet_view.showGridLines = False
     sheet["A1"] = "AAPL Trend Allocation Research Framework"
@@ -383,6 +538,13 @@ def _raw_results(result: ResearchResult) -> pd.DataFrame:
             result.turnover_analysis.assign(source="turnover_analysis"),
             result.v03_comparison.assign(source="v03_comparison"),
             result.v03_cost_sensitivity.assign(source="v03_cost_sensitivity"),
+            result.capture_leaderboard.assign(source="capture_leaderboard"),
+            result.risk_filter_sweep.assign(source="risk_filter_sweep"),
+            result.regime_results.assign(source="regime_results"),
+            result.trade_log.assign(source="trade_log"),
+            result.benchmark_comparison.assign(source="benchmark_comparison"),
+            result.v04_comparison.assign(source="v04_comparison"),
+            result.v04_cost_sensitivity.assign(source="v04_cost_sensitivity"),
         ],
         ignore_index=True,
         sort=False,
