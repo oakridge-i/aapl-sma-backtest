@@ -2,6 +2,77 @@
 
 All notable project changes are documented here.
 
+## 0.5.0 - Honest Methodology
+
+This release changes how results are produced, not what the model trades. The
+goal is that reported out-of-sample numbers can be trusted.
+
+### Fixed
+
+- Removed test-period leakage from model selection. Previously the v0.3
+  allocation leaderboard and the v0.4 capture leaderboard were evaluated on
+  the test period and the best test performer was selected, which made the
+  reported "out-of-sample" metrics optimistically biased. All candidate
+  ranking and selection now happens on the train period only; the test period
+  is touched once per final model for reporting.
+- Closed-trade statistics now segment trades by exposure episodes (entering
+  and leaving a flat position) instead of treating any weight decrease as an
+  exit. With volatility sizing the old logic counted daily resizing as
+  trades, which corrupted win rates and trade counts.
+
+### Added
+
+- Cash yield: an optional cash proxy (default `BIL` in `research_v5.yaml`)
+  earns the uninvested weight's return in the engine, and its annualized
+  return is used as the risk-free rate in Sharpe/Sortino. Long/cash models
+  are no longer penalized as if cash earned zero.
+- `quant_backtest.stats` with three significance tools:
+  - circular block bootstrap confidence intervals for CAGR, Sharpe, and max
+    drawdown;
+  - Deflated Sharpe Ratio (Bailey & Lopez de Prado), using the number and
+    dispersion of train-period candidates as the multiple-testing hurdle;
+  - a circular-shift permutation test for timing skill that preserves the
+    exposure profile and cost structure.
+- Walk-forward evaluation of the final fixed models
+  (`final_model_walk_forward.csv` and chart), so the selected models are
+  judged across every test window, not one favorable split.
+- Reproducibility artifacts per run: `data_snapshot.csv` (prices with SHA256
+  content hash) and `run_manifest.json` (config, data hash, package versions,
+  git commit). `research.py --data-snapshot` reruns on saved data.
+- `configs/research_v5.yaml` as the default research configuration.
+- New outputs: `significance_results.csv`, `final_model_walk_forward.csv`,
+  plus `Significance` and `Final Walk Forward` workbook sheets.
+- `pyproject.toml`; the package can be installed with `pip install -e .`.
+
+### Changed
+
+- `research.py` now defaults to `configs/research_v5.yaml`.
+- `model_leaderboard.csv` and `allocation_leaderboard.csv` now contain
+  train-period metrics (labels `leaderboard_train`, `allocation_train`).
+  Comparison tables (`v03_comparison.csv`, `v04_comparison.csv`,
+  `benchmark_comparison.csv`) remain test-period.
+- The v0.4 capture filter hurdle now compares candidates against the v0.3
+  model's train-period metrics instead of test-period metrics.
+- `trades` now counts exposure episodes rather than days with turnover.
+- Older configs (`research_v2/v3/v4.yaml`) remain runnable, but selection is
+  always train-only now; their results will differ from the 0.3/0.4 reports
+  because the leak is gone.
+
+### Findings
+
+- With honest selection the framework picks `SMA 5/50` hysteresis (entry
+  `0.0%`, exit `-0.5%`, 20-day hold, 5-day cooldown); v0.4 again retains the
+  v0.3 model.
+- On the test period through `2026-06-09` the selected model earns CAGR
+  `5.89%`, Sharpe `0.24` (excess over BIL), max drawdown `-29.10%`, turnover
+  `7.21`, versus AAPL buy-and-hold CAGR `17.50%` and Sharpe `0.61`.
+- Significance: bootstrap Sharpe interval `-0.57` to `+1.01`, probability of
+  negative Sharpe `33.9%`, Deflated Sharpe Ratio `0.54`, permutation p-value
+  `0.71`. There is no statistical evidence of timing skill.
+- Conclusion: the v0.3/v0.4 reported edge was a selection artifact. The
+  honest value of the current rules is drawdown cushioning in bear regimes
+  (2022: `-8.6%` vs `-28.5%` for AAPL), not alpha.
+
 ## 0.4.0 - Capture-Aware Risk Model
 
 ### Added

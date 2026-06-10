@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from datetime import date
 from pathlib import Path
 
@@ -58,6 +59,25 @@ def download_adjusted_close(
     frame = pd.DataFrame(prices).sort_index()
     frame.index.name = "Date"
     return frame.dropna(how="all")
+
+
+def frame_sha256(prices: pd.DataFrame) -> str:
+    """Stable content hash of a price frame, for run manifests."""
+    canonical = prices.sort_index().round(8).to_csv(index_label="Date", lineterminator="\n")
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def save_price_snapshot(prices: pd.DataFrame, path: Path) -> str:
+    """Write the price frame to CSV and return its content hash."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    prices.sort_index().to_csv(path, index_label="Date", lineterminator="\n")
+    return frame_sha256(prices)
+
+
+def load_price_snapshot(path: Path) -> pd.DataFrame:
+    frame = pd.read_csv(path, index_col="Date", parse_dates=True)
+    frame.index.name = "Date"
+    return frame.sort_index().astype(float)
 
 
 def default_end_date() -> str:

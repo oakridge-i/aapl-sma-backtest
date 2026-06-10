@@ -5,10 +5,12 @@ daily market data, tests a long-only SMA 20 / SMA 100 crossover strategy, applie
 10 bps transaction costs on position changes, and compares the strategy with a
 buy-and-hold benchmark.
 
-The current research version adds capture-aware risk controls: downside filters,
-volatility-based position sizing, fallback stress tests, regime diagnostics,
-trade logs, and a model selection rule that can retain the previous baseline
-when no robust upgrade is found.
+The current research version (0.5.0) focuses on honest methodology: all model
+selection happens on the train period only, cash earns a T-bill proxy yield,
+Sharpe uses a real risk-free rate, and every reported result comes with
+significance diagnostics (block bootstrap intervals, Deflated Sharpe Ratio,
+and a timing permutation test). Each run also writes a data snapshot and a
+manifest so results can be reproduced exactly.
 
 This project is for research and education only. It is not investment advice.
 
@@ -19,19 +21,23 @@ research workflow that stress-tests the strategy across transaction costs,
 parameter choices, train/test periods, walk-forward windows, and a small
 multi-asset universe.
 
-The latest run keeps the v0.3 low-turnover model as the selected baseline. v0.4
-candidates improved some raw risk metrics, but the best candidates failed the
-capture and turnover filters. The project is currently more useful as a
-risk-management research framework than as a finished trading model.
+Version 0.5.0 removed a test-period leak from model selection: earlier
+versions picked the final model by its test-period score, which biased the
+reported out-of-sample numbers upward. Selection is now train-only, the test
+period is touched once per final model, and the final models are additionally
+evaluated across every walk-forward window. Pre-0.5 reported metrics should be
+treated as optimistic; the 0.5 reports supersede them.
 
 ## Project Contents
 
 - `main.py` - CLI entrypoint for downloading data and running the backtest.
 - `research.py` - CLI entrypoint for the robustness research workflow.
-- `configs/research_v4.yaml` - default capture-aware research configuration.
+- `configs/research_v5.yaml` - default configuration: cash yield, train-only
+  selection, and significance testing enabled.
+- `configs/research_v4.yaml` - capture-aware configuration, kept compatible.
 - `configs/research_v3.yaml` - turnover-aware configuration, kept compatible.
 - `configs/research_v2.yaml` - previous robustness configuration, kept compatible.
-- `src/quant_backtest/` - data loading, strategy, metrics, and charting code.
+- `src/quant_backtest/` - data loading, strategy, metrics, stats, and charting code.
 - `scripts/create_visual_report.py` - creates the model forecast PNG and Excel-ready CSV.
 - `scripts/create_excel_report.py` - creates the Excel dashboard from generated CSV files.
 - `outputs/` - generated reports and sample output from the AAPL run.
@@ -61,23 +67,25 @@ The command writes:
 Full run using Yahoo Finance data:
 
 ```powershell
-.\.venv\Scripts\python research.py --config configs\research_v4.yaml
+.\.venv\Scripts\python research.py --config configs\research_v5.yaml
 ```
 
-Legacy v0.3 run:
+Reproduce a previous run exactly from its saved data snapshot:
 
 ```powershell
-.\.venv\Scripts\python research.py --config configs\research_v3.yaml
+.\.venv\Scripts\python research.py --config configs\research_v5.yaml --data-snapshot outputs\data_snapshot.csv
+```
+
+Legacy v0.3/v0.4 configs remain runnable:
+
+```powershell
+.\.venv\Scripts\python research.py --config configs\research_v4.yaml
 ```
 
 Offline smoke run using deterministic fixture data:
 
 ```powershell
-.\.venv\Scripts\python research.py --config configs\research_v4.yaml --no-download --output-dir outputs_fixture_v4
-```
-
-```powershell
-.\.venv\Scripts\python research.py --config configs\research_v3.yaml --no-download --output-dir outputs_fixture_v3
+.\.venv\Scripts\python research.py --config configs\research_v5.yaml --no-download --output-dir outputs_fixture_v5
 ```
 
 The research command writes CSV tables, charts, and an Excel workbook:
@@ -102,31 +110,46 @@ The research command writes CSV tables, charts, and an Excel workbook:
 - `outputs/benchmark_comparison.csv`
 - `outputs/v04_comparison.csv`
 - `outputs/v04_selected_curve.csv`
+- `outputs/final_model_walk_forward.csv`
+- `outputs/significance_results.csv`
+- `outputs/data_snapshot.csv` and `outputs/run_manifest.json` (reproducibility)
 - `outputs/research_report.xlsx`
 - PNG charts for baseline, costs, heatmaps, train/test, multi-asset,
   leaderboard, v0.3 equity/drawdown, turnover, capture ratios, allocation
   exposure, cost sensitivity, entry/exit signals, v0.4 capture diagnostics,
-  regime performance, and exposure sizing.
+  regime performance, exposure sizing, and final-model walk-forward CAGR.
+
+Note on leaderboards: since 0.5.0, `model_leaderboard.csv` and
+`allocation_leaderboard.csv` report **train-period** metrics, because that is
+the data selection is allowed to see. Test-period numbers live in the
+comparison tables and `significance_results.csv`.
 
 ## Research Notes
 
-The latest research run found:
+Methodology since 0.5.0:
 
-- the original `SMA 20/100` strategy is profitable but materially lags AAPL
-  buy-and-hold;
-- the v2 parameter sweep selected a faster `SMA 5/50` region, but its turnover
-  was high out of sample;
-- the v0.3 selected model is `SMA 5/200` with hysteresis, a 10-day minimum hold,
-  and a 5-day cooldown;
-- the selected v0.3 model lowers annualized turnover from `8.40` to `1.68` on
-  the test period;
-- `outputs/v03_entry_exit_signals.png` shows the selected model's entries and
-  exits on top of the AAPL price/SMA chart;
-- SPY/QQQ fallback variants still improve raw return, but their turnover remains
-  too high for the current robustness filter.
-- v0.4 did not select a new model. The capture-aware candidates with better
-  Sharpe and drawdown still failed the turnover and upside-capture filters, so
-  the framework retained the v0.3 `SMA 5/200` long/cash hysteresis model.
+- candidate ranking and model selection use the train period only; the test
+  period is evaluated once per final model;
+- cash earns the `BIL` proxy return, and Sharpe/Sortino subtract the
+  corresponding risk-free rate;
+- every selected model is re-checked across walk-forward windows with frozen
+  parameters (`final_model_walk_forward.csv`);
+- `significance_results.csv` reports bootstrap confidence intervals, the
+  Deflated Sharpe Ratio against the number of candidates tried, and a
+  permutation p-value for timing skill.
+
+The first honest run (June 2026) found that with train-only selection the
+model picks `SMA 5/50` hysteresis and earns test CAGR `5.89%` with Sharpe
+`0.24` versus AAPL buy-and-hold CAGR `17.50%` with Sharpe `0.61`. The
+permutation test gives p = `0.71` and the bootstrap puts a `33.9%` chance on a
+negative true Sharpe: the previously reported v0.3 numbers were an artifact of
+the selection leak, and the current rules show no demonstrated timing alpha.
+The proven benefit is limited to drawdown cushioning in bear regimes (2022:
+`-8.6%` vs `-28.5%` for AAPL).
+
+Earlier findings (v0.2-v0.4) are kept in `docs/research_summary.md`, with the
+caveat that pre-0.5 selection leaked test data, so those numbers are
+optimistic.
 
 See `docs/research_summary.md` for a fuller interpretation.
 
@@ -151,13 +174,13 @@ The report scripts write:
 
 ## Latest Sample Result
 
-For the AAPL run from `2015-01-02` through `2026-05-19`, starting with
+For the AAPL run from `2015-01-02` through `2026-06-08`, starting with
 `$10,000`:
 
-- SMA strategy ending equity: `$34,832.56`
-- SMA strategy total return: `248.33%`
-- Buy-and-hold ending equity: `$123,579.06`
-- Buy-and-hold total return: `1135.79%`
+- SMA strategy ending equity: `$35,132.01`
+- SMA strategy total return: `251.32%`
+- Buy-and-hold ending equity: `$124,641.40`
+- Buy-and-hold total return: `1146.41%`
 
 The strategy made money historically, but it did not outperform buy-and-hold for
 this AAPL period.
@@ -168,3 +191,6 @@ this AAPL period.
 - Signals are shifted by one day to avoid lookahead bias.
 - The `--end` argument is exclusive because Yahoo Finance treats it that way.
 - The current research intentionally avoids shorts; it focuses on validating and improving long-only signals first.
+- The package can be installed in editable mode with
+  `.\.venv\Scripts\python -m pip install -e .` (see `pyproject.toml`); the CLI
+  scripts also work without installation via the bundled `src` path.
