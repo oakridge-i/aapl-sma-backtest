@@ -2,6 +2,42 @@
 
 All notable project changes are documented here.
 
+## Unreleased (0.6.0 M1 - Research Foundation)
+
+Engineering and methodology groundwork for the 0.6.0 model-improvement cycle.
+No trading logic changed; all 0.5.0 results remain reproducible.
+
+### Added
+
+- Strategy family registry (`quant_backtest.registry`): families are
+  registered with their parameter and strategy types, and evaluation
+  dispatches through the registry, so new signal families can be added
+  without touching the sweep machinery.
+- Parallel sweep execution (`quant_backtest.parallel`): grids run on a
+  process pool (`compute.workers: auto|N` in YAML), with results bit-for-bit
+  identical to serial runs. Engages only for grids of 32+ jobs.
+- Nested walk-forward selection (`nested_walk_forward.enabled`): the full
+  v0.3 selection pipeline re-runs inside every walk-forward window and the
+  selected model is evaluated on that window's out-of-sample slice. The
+  stitched OOS series is selection-clean by construction, is bootstrapped in
+  `significance_results.csv` (`nested_oos_stitched` row), and becomes the
+  primary scoreboard for 0.6 model upgrades. Outputs:
+  `nested_walk_forward.csv`, `nested_walk_forward_summary.csv`.
+- Probability of Backtest Overfitting (`pbo.enabled`): vectorized CSCV
+  (Bailey et al.) over the hysteresis grid's daily-return matrix, with
+  candidate capping and configurable block count. Output: `pbo_results.csv`.
+- `configs/research_v6.yaml`: v5 settings plus parallel workers, nested
+  walk-forward, and PBO enabled.
+
+### Changed
+
+- Split the `experiments.py` monolith (~1700 lines) into focused modules:
+  `research_config`, `research_data`, `evaluation`, `selection`, `sweeps`,
+  `significance`, `parallel`, `registry`. `experiments.py` remains the
+  orchestrator and re-exports the public API, so existing imports keep
+  working.
+- Package version bumped to `0.6.0.dev0`.
+
 ## 0.5.0 - Honest Methodology
 
 This release changes how results are produced, not what the model trades. The

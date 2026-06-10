@@ -42,6 +42,9 @@ CSV_OUTPUTS = {
     "v04_cost_sensitivity.csv": "v04_cost_sensitivity",
     "final_model_walk_forward.csv": "final_walk_forward",
     "significance_results.csv": "significance_results",
+    "nested_walk_forward.csv": "nested_walk_forward",
+    "nested_walk_forward_summary.csv": "nested_walk_forward_summary",
+    "pbo_results.csv": "pbo_results",
 }
 
 
@@ -71,6 +74,9 @@ def save_research_outputs(result: ResearchResult, output_dir: Path) -> None:
     result.v04_curve.to_csv(output_dir / "v04_selected_curve.csv", index_label="Date")
     result.final_walk_forward.to_csv(output_dir / "final_model_walk_forward.csv", index=False)
     result.significance_results.to_csv(output_dir / "significance_results.csv", index=False)
+    result.nested_walk_forward.to_csv(output_dir / "nested_walk_forward.csv", index=False)
+    result.nested_walk_forward_summary.to_csv(output_dir / "nested_walk_forward_summary.csv", index=False)
+    result.pbo_results.to_csv(output_dir / "pbo_results.csv", index=False)
 
     save_price_snapshot(result.prices, output_dir / "data_snapshot.csv")
     if result.run_metadata:
@@ -141,6 +147,9 @@ def save_research_workbook(result: ResearchResult, output_path: Path) -> None:
         "v0.4 Costs": result.v04_cost_sensitivity,
         "Final Walk Forward": result.final_walk_forward,
         "Significance": result.significance_results,
+        "Nested Walk Forward": result.nested_walk_forward,
+        "Nested WF Summary": result.nested_walk_forward_summary,
+        "PBO": result.pbo_results,
         "Raw Results": _raw_results(result),
     }
 

@@ -1,0 +1,134 @@
+﻿period:
+  start: 2015-01-01
+  end: latest
+initial_capital: 10000
+base_ticker: AAPL
+universe:
+  - AAPL
+  - MSFT
+  - NVDA
+  - AMZN
+  - META
+  - GOOGL
+  - SPY
+  - QQQ
+cash:
+  # Cash proxy: the uninvested weight earns this ETF's total return, and its
+  # annualized return is used as the risk-free rate in Sharpe/Sortino.
+  proxy: BIL
+significance:
+  enabled: true
+  bootstrap_iterations: 1000
+  block_size: 21
+  permutation_iterations: 500
+  seed: 42
+compute:
+  # auto = one worker per CPU core; 0 = serial. Parallel results are
+  # identical to serial results (deterministic ordering).
+  workers: auto
+nested_walk_forward:
+  # Re-run the full v0.3 selection inside every walk-forward window and
+  # stitch the out-of-sample results. Primary scoreboard since 0.6.
+  enabled: true
+pbo:
+  # CSCV probability of backtest overfitting over the hysteresis grid.
+  enabled: true
+  max_candidates: 200
+  blocks: 12
+cost_bps:
+  - 0
+  - 5
+  - 10
+  - 20
+  - 50
+sma_grid:
+  short:
+    - 5
+    - 10
+    - 20
+    - 30
+    - 50
+  long:
+    - 50
+    - 100
+    - 150
+    - 200
+train_test:
+  train_start: 2015-01-01
+  train_end: 2020-12-31
+  test_start: 2021-01-01
+  test_end: latest
+walk_forward:
+  train_years: 3
+  test_years: 1
+  step_years: 1
+hysteresis:
+  entry_thresholds:
+    - 0
+    - 0.005
+    - 0.01
+    - 0.02
+  exit_thresholds:
+    - 0
+    - -0.005
+    - -0.01
+  min_hold_days:
+    - 0
+    - 10
+    - 20
+  cooldown_days:
+    - 0
+    - 5
+    - 10
+market_regime:
+  short_window: 50
+  long_window: 200
+capture_model:
+  enabled: true
+  trend_candidates: 8
+  risk_candidates: 20
+risk_filters:
+  max_realized_volatilities:
+    - 0.35
+    - 0.45
+  rolling_drawdown_thresholds:
+    - 0.08
+    - 0.12
+  sharp_loss_thresholds:
+    - -0.06
+    - -0.08
+volatility_sizing:
+  target_volatilities:
+    - 0.15
+    - 0.20
+    - 0.25
+  windows:
+    - 20
+    - 40
+    - 60
+fallback:
+  assets:
+    - cash
+    - SPY
+    - QQQ
+    - hybrid_QQQ
+  weights:
+    - 0.5
+    - 0.75
+    - 1.0
+  min_hold_days:
+    - 0
+    - 10
+  cooldown_days:
+    - 0
+    - 5
+selection:
+  top_candidates: 20
+  final_turnover_limit: 6.0
+  capture_turnover_limit: 2.5
+  min_capture_spread: 0.10
+  min_upside_capture: 0.60
+  max_downside_capture: 0.50
+  max_drawdown_slippage: 0.03
+spread_threshold: 0.01
+output_dir: outputs

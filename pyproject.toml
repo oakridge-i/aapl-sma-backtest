@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "quant-backtest"
-version = "0.5.0"
+version = "0.6.0.dev0"
 description = "AAPL SMA robustness research: long-only trend backtests with honest selection and significance testing"
 readme = "README.md"
 requires-python = ">=3.11"
