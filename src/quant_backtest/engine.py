@@ -25,6 +25,7 @@ def run_weight_backtest(
     returns: pd.DataFrame,
     target_weights: pd.DataFrame,
     config: EngineConfig,
+    cash_returns: pd.Series | None = None,
 ) -> EngineResult:
     if config.initial_capital <= 0:
         raise ValueError("initial_capital must be positive.")
@@ -39,6 +40,10 @@ def run_weight_backtest(
     turnover = executed_weights.diff().abs().sum(axis=1).fillna(executed_weights.abs().sum(axis=1))
     transaction_cost = config.cost_model.calculate(turnover)
     gross_return = (executed_weights * aligned_returns).sum(axis=1)
+    cash_weight = (1.0 - executed_weights.sum(axis=1)).clip(lower=0.0)
+    if cash_returns is not None:
+        aligned_cash = cash_returns.reindex(aligned_returns.index).fillna(0.0).astype(float)
+        gross_return = gross_return + cash_weight * aligned_cash
     net_return = gross_return - transaction_cost
     equity = config.initial_capital * (1.0 + net_return).cumprod()
     gross_equity = config.initial_capital * (1.0 + gross_return).cumprod()
@@ -49,6 +54,7 @@ def run_weight_backtest(
             "strategy_return": net_return,
             "turnover": turnover,
             "transaction_cost": transaction_cost,
+            "cash_weight": cash_weight,
             "strategy_equity": equity,
             "gross_strategy_equity": gross_equity,
             "strategy_drawdown": drawdown_series(equity),

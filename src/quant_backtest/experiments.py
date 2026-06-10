@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+import platform
+import subprocess
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -8,10 +11,11 @@ import numpy as np
 import pandas as pd
 import yaml
 
-from .backtest import calculate_closed_trade_returns, calculate_win_rate
+from .backtest import calculate_closed_trade_returns, calculate_win_rate, count_exposure_episodes
 from .costs import BpsCost
-from .data import default_end_date, download_adjusted_close
+from .data import default_end_date, download_adjusted_close, frame_sha256, load_price_snapshot
 from .engine import EngineConfig, run_weight_backtest
+from .stats import block_bootstrap_summary, deflated_sharpe_ratio, timing_permutation_pvalue
 from .metrics import (
     annualized_turnover,
     avoided_downside_while_underweight,
@@ -96,6 +100,12 @@ class ResearchConfig:
     fallback_weights: list[float] | None = None
     fallback_min_hold_days: list[int] | None = None
     fallback_cooldown_days: list[int] | None = None
+    cash_proxy_ticker: str | None = None
+    enable_significance: bool = True
+    bootstrap_iterations: int = 1000
+    bootstrap_block_size: int = 21
+    permutation_iterations: int = 500
+    significance_seed: int = 42
 
 
 @dataclass(frozen=True)
@@ -124,6 +134,9 @@ class ResearchResult:
     v04_comparison: pd.DataFrame
     v04_cost_sensitivity: pd.DataFrame
     v04_curve: pd.DataFrame
+    final_walk_forward: pd.DataFrame = field(default_factory=pd.DataFrame)
+    significance_results: pd.DataFrame = field(default_factory=pd.DataFrame)
+    run_metadata: dict[str, Any] = field(default_factory=dict)
 
 
 def load_research_config(path: Path) -> ResearchConfig:
@@ -141,6 +154,11 @@ def load_research_config(path: Path) -> ResearchConfig:
     risk_filters = raw.get("risk_filters", {})
     volatility_sizing = raw.get("volatility_sizing", {})
     fallback = raw.get("fallback", {})
+    cash = raw.get("cash", {})
+    significance = raw.get("significance", {})
+    cash_proxy = cash.get("proxy")
+    if cash_proxy is not None and str(cash_proxy).lower() in ("", "none", "cash", "null"):
+        cash_proxy = None
     return ResearchConfig(
         start=str(period["start"]),
         end=None if period.get("end") in (None, "latest") else str(period["end"]),
@@ -188,11 +206,29 @@ def load_research_config(path: Path) -> ResearchConfig:
         fallback_weights=[float(value) for value in fallback.get("weights", [0.5, 0.75, 1.0])],
         fallback_min_hold_days=[int(value) for value in fallback.get("min_hold_days", [0, 10])],
         fallback_cooldown_days=[int(value) for value in fallback.get("cooldown_days", [0, 5])],
+        cash_proxy_ticker=None if cash_proxy is None else str(cash_proxy).upper(),
+        enable_significance=bool(significance.get("enabled", True)),
+        bootstrap_iterations=int(significance.get("bootstrap_iterations", 1000)),
+        bootstrap_block_size=int(significance.get("block_size", 21)),
+        permutation_iterations=int(significance.get("permutation_iterations", 500)),
+        significance_seed=int(significance.get("seed", 42)),
     )
 
 
-def run_research(config: ResearchConfig, fixture_data: bool = False) -> ResearchResult:
-    prices = create_fixture_prices(config) if fixture_data else _download_prices(config)
+def run_research(
+    config: ResearchConfig,
+    fixture_data: bool = False,
+    snapshot_path: Path | None = None,
+) -> ResearchResult:
+    if snapshot_path is not None:
+        prices = load_price_snapshot(Path(snapshot_path))
+        data_source = f"snapshot:{snapshot_path}"
+    elif fixture_data:
+        prices = create_fixture_prices(config)
+        data_source = "fixture"
+    else:
+        prices = _download_prices(config)
+        data_source = "yfinance"
     prices = prices.loc[config.start : config.end or prices.index.max()]
 
     base_params = SmaParameters(short_window=20, long_window=100)
@@ -204,6 +240,7 @@ def run_research(config: ResearchConfig, fixture_data: bool = False) -> Research
         cost_bps=10.0,
         initial_capital=config.initial_capital,
         label="baseline",
+        cash_proxy=config.cash_proxy_ticker,
     )
     parameter_sweep = run_parameter_sweep(prices, config)
     train_prices = prices.loc[config.train_start : config.train_end]
@@ -213,6 +250,10 @@ def run_research(config: ResearchConfig, fixture_data: bool = False) -> Research
     train_test_results = run_train_test(prices, config)
     walk_forward_results = run_walk_forward(prices, config)
     multi_asset_results = run_multi_asset(prices, config, selected_params)
+    # All candidate ranking below happens on the train period only. The test
+    # period is touched exactly once per final model, in the comparison and
+    # significance steps, so reported out-of-sample numbers are not the result
+    # of picking the best test outcome.
     leaderboard = run_model_leaderboard(prices, config, selected_params)
     train_hysteresis = run_hysteresis_sweep(train_prices, config, period_name="train_hysteresis")
     top_trend_candidates = select_top_trend_candidates(train_hysteresis, config)
@@ -235,7 +276,31 @@ def run_research(config: ResearchConfig, fixture_data: bool = False) -> Research
             "v04_comparison": pd.DataFrame(),
             "v04_cost_sensitivity": pd.DataFrame(),
             "v04_curve": pd.DataFrame(),
+            "selected_v4_model": None,
         }
+
+    final_models: list[tuple[str, Any, str]] = [
+        ("baseline_sma_20_100", SmaParameters(20, 100), "long_cash"),
+        ("selected_v2", selected_params, "long_cash"),
+        ("selected_v3", selected_model["params"], selected_model["variant"]),
+    ]
+    if v04.get("selected_v4_model"):
+        v4_model = v04["selected_v4_model"]
+        final_models.append(("selected_v4", v4_model["params"], v4_model["variant"]))
+    final_walk_forward = run_final_model_walk_forward(prices, config, final_models)
+
+    significance_results = pd.DataFrame()
+    if config.enable_significance:
+        significance_results = run_significance_analysis(
+            prices=prices,
+            config=config,
+            selected_v3_model=selected_model,
+            selected_v4_model=v04.get("selected_v4_model"),
+            allocation_leaderboard=allocation_leaderboard,
+            capture_leaderboard=v04["capture_leaderboard"],
+        )
+
+    run_metadata = _build_run_metadata(config, prices, data_source)
 
     return ResearchResult(
         prices=prices,
@@ -262,7 +327,48 @@ def run_research(config: ResearchConfig, fixture_data: bool = False) -> Research
         v04_comparison=v04["v04_comparison"],
         v04_cost_sensitivity=v04["v04_cost_sensitivity"],
         v04_curve=v04["v04_curve"],
+        final_walk_forward=final_walk_forward,
+        significance_results=significance_results,
+        run_metadata=run_metadata,
     )
+
+
+def _build_run_metadata(config: ResearchConfig, prices: pd.DataFrame, data_source: str) -> dict[str, Any]:
+    versions = {"python": platform.python_version(), "pandas": pd.__version__, "numpy": np.__version__}
+    try:
+        import yfinance
+
+        versions["yfinance"] = yfinance.__version__
+    except Exception:
+        pass
+    return {
+        "created_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "data_source": data_source,
+        "data_sha256": frame_sha256(prices),
+        "data_start": str(prices.index.min().date()),
+        "data_end": str(prices.index.max().date()),
+        "tickers": list(prices.columns),
+        "selection_period": "train",
+        "git_commit": _git_commit(),
+        "versions": versions,
+        "config": dict(config.__dict__),
+    }
+
+
+def _git_commit() -> str | None:
+    try:
+        output = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=Path(__file__).resolve().parents[2],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except Exception:
+        return None
+    commit = output.stdout.strip()
+    return commit or None
 
 
 def run_parameter_sweep(prices: pd.DataFrame, config: ResearchConfig, period_name: str = "full") -> pd.DataFrame:
@@ -277,6 +383,7 @@ def run_parameter_sweep(prices: pd.DataFrame, config: ResearchConfig, period_nam
             cost_bps=10.0,
             initial_capital=config.initial_capital,
             label=period_name,
+            cash_proxy=config.cash_proxy_ticker,
         )
         rows.append(result["row"])
     table = pd.DataFrame(rows)
@@ -300,6 +407,7 @@ def run_cost_sensitivity(prices: pd.DataFrame, config: ResearchConfig, selected_
                 cost_bps=cost_bps,
                 initial_capital=config.initial_capital,
                 label=scenario_name,
+                cash_proxy=config.cash_proxy_ticker,
             )
             rows.append(result["row"])
     table = pd.DataFrame(rows)
@@ -321,13 +429,16 @@ def run_train_test(prices: pd.DataFrame, config: ResearchConfig) -> pd.DataFrame
             cost_bps=10.0,
             initial_capital=config.initial_capital,
             label=period_name,
+            cash_proxy=config.cash_proxy_ticker,
         )
         rows.append(result["row"] | {"selected_on": "train"})
     return pd.DataFrame(rows)
 
 
-def run_walk_forward(prices: pd.DataFrame, config: ResearchConfig) -> pd.DataFrame:
-    rows: list[dict[str, Any]] = []
+def _walk_forward_windows(
+    prices: pd.DataFrame, config: ResearchConfig
+) -> list[tuple[int, pd.Timestamp, pd.Timestamp, pd.Timestamp, pd.Timestamp]]:
+    windows = []
     start = pd.Timestamp(config.start)
     end = pd.Timestamp(config.end or prices.index.max())
     train_offset = pd.DateOffset(years=config.walk_forward_train_years)
@@ -344,7 +455,15 @@ def run_walk_forward(prices: pd.DataFrame, config: ResearchConfig) -> pd.DataFra
             break
         if test_end > end:
             test_end = end
+        windows.append((window_id, train_start, train_end, test_start, test_end))
+        train_start = train_start + step_offset
+        window_id += 1
+    return windows
 
+
+def run_walk_forward(prices: pd.DataFrame, config: ResearchConfig) -> pd.DataFrame:
+    rows: list[dict[str, Any]] = []
+    for window_id, train_start, train_end, test_start, test_end in _walk_forward_windows(prices, config):
         train_prices = prices.loc[train_start:train_end]
         test_prices = prices.loc[test_start:test_end]
         if len(train_prices) > 250 and len(test_prices) > 20:
@@ -357,6 +476,7 @@ def run_walk_forward(prices: pd.DataFrame, config: ResearchConfig) -> pd.DataFra
                 cost_bps=10.0,
                 initial_capital=config.initial_capital,
                 label="walk_forward_test",
+                cash_proxy=config.cash_proxy_ticker,
             )
             rows.append(
                 result["row"]
@@ -368,9 +488,140 @@ def run_walk_forward(prices: pd.DataFrame, config: ResearchConfig) -> pd.DataFra
                     "test_end": test_end.date().isoformat(),
                 }
             )
-        train_start = train_start + step_offset
-        window_id += 1
     return pd.DataFrame(rows)
+
+
+def run_final_model_walk_forward(
+    prices: pd.DataFrame,
+    config: ResearchConfig,
+    models: list[tuple[str, Any, str]],
+) -> pd.DataFrame:
+    """Evaluate the final (fixed) models across every walk-forward test window.
+
+    Parameters stay frozen, so this shows whether the selected models hold up
+    across sub-periods rather than relying on one favorable train/test split.
+    """
+    rows: list[dict[str, Any]] = []
+    for window_id, _, _, test_start, test_end in _walk_forward_windows(prices, config):
+        test_prices = prices.loc[test_start:test_end]
+        if len(test_prices) <= 20:
+            continue
+        for model_label, params, variant in models:
+            result = evaluate_strategy(
+                prices=test_prices,
+                ticker=config.base_ticker,
+                params=params,
+                variant=variant,
+                cost_bps=10.0,
+                initial_capital=config.initial_capital,
+                label="final_walk_forward",
+                market_regime_short_window=config.market_regime_short_window,
+                market_regime_long_window=config.market_regime_long_window,
+                cash_proxy=config.cash_proxy_ticker,
+            )
+            row = result["row"]
+            rows.append(
+                {
+                    "model": model_label,
+                    "variant": variant,
+                    "window_id": window_id,
+                    "test_start": test_start.date().isoformat(),
+                    "test_end": test_end.date().isoformat(),
+                    "cagr": row["cagr"],
+                    "sharpe": row["sharpe"],
+                    "max_drawdown": row["max_drawdown"],
+                    "turnover": row["turnover"],
+                    "exposure": row["exposure"],
+                    "benchmark_cagr": row["benchmark_cagr"],
+                    "benchmark_sharpe": row["benchmark_sharpe"],
+                    "excess_cagr_vs_benchmark": row["excess_cagr_vs_benchmark"],
+                }
+            )
+    table = pd.DataFrame(rows)
+    if table.empty:
+        return table
+    return table.sort_values(["model", "window_id"]).reset_index(drop=True)
+
+
+def run_significance_analysis(
+    prices: pd.DataFrame,
+    config: ResearchConfig,
+    selected_v3_model: dict[str, Any],
+    selected_v4_model: dict[str, Any] | None,
+    allocation_leaderboard: pd.DataFrame,
+    capture_leaderboard: pd.DataFrame,
+) -> pd.DataFrame:
+    """Bootstrap, Deflated Sharpe, and permutation diagnostics on the test period.
+
+    These are reporting steps for already-selected models: they quantify how
+    much of the single observed test-period result could be luck.
+    """
+    test_prices = prices.loc[config.test_start : config.test_end or prices.index.max()]
+    models: list[tuple[str, Any, str, pd.DataFrame]] = [
+        ("selected_v3", selected_v3_model["params"], selected_v3_model["variant"], allocation_leaderboard),
+    ]
+    if selected_v4_model is not None:
+        models.append(
+            ("selected_v4", selected_v4_model["params"], selected_v4_model["variant"], capture_leaderboard)
+        )
+
+    rows: list[dict[str, Any]] = []
+    for model_label, params, variant, trials_table in models:
+        result = evaluate_strategy(
+            prices=test_prices,
+            ticker=config.base_ticker,
+            params=params,
+            variant=variant,
+            cost_bps=10.0,
+            initial_capital=config.initial_capital,
+            label="significance_test",
+            market_regime_short_window=config.market_regime_short_window,
+            market_regime_long_window=config.market_regime_long_window,
+            cash_proxy=config.cash_proxy_ticker,
+        )
+        curve = result["curve"]
+        returns = curve["strategy_return"]
+        risk_free_rate = result["risk_free_rate"]
+
+        row: dict[str, Any] = {
+            "model": model_label,
+            "variant": variant,
+            "period_start": str(curve.index.min().date()),
+            "period_end": str(curve.index.max().date()),
+            "n_obs": int(returns.dropna().shape[0]),
+            "observed_cagr": result["row"]["cagr"],
+            "observed_sharpe": result["row"]["sharpe"],
+            "observed_max_drawdown": result["row"]["max_drawdown"],
+        }
+        row |= block_bootstrap_summary(
+            returns,
+            n_iterations=config.bootstrap_iterations,
+            block_size=config.bootstrap_block_size,
+            seed=config.significance_seed,
+            risk_free_rate=risk_free_rate,
+        )
+        trial_sharpes = (
+            trials_table["sharpe"] if not trials_table.empty and "sharpe" in trials_table else pd.Series(dtype=float)
+        )
+        row |= deflated_sharpe_ratio(returns, trial_sharpes, risk_free_rate=risk_free_rate)
+        cash_returns = _cash_return_series(test_prices, config.cash_proxy_ticker)
+        weight_returns = test_prices[result["weights"].columns].pct_change().fillna(0.0)
+        row |= timing_permutation_pvalue(
+            executed_weights=result["weights"],
+            asset_returns=weight_returns,
+            cost_bps=10.0,
+            cash_returns=cash_returns,
+            n_permutations=config.permutation_iterations,
+            seed=config.significance_seed,
+        )
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def _cash_return_series(prices: pd.DataFrame, cash_proxy: str | None) -> pd.Series | None:
+    if not cash_proxy or cash_proxy not in prices.columns:
+        return None
+    return prices[cash_proxy].dropna().pct_change().fillna(0.0)
 
 
 def run_multi_asset(prices: pd.DataFrame, config: ResearchConfig, params: SmaParameters) -> pd.DataFrame:
@@ -384,6 +635,7 @@ def run_multi_asset(prices: pd.DataFrame, config: ResearchConfig, params: SmaPar
             cost_bps=10.0,
             initial_capital=config.initial_capital,
             label="multi_asset",
+            cash_proxy=config.cash_proxy_ticker,
         )
         rows.append(result["row"])
     portfolio = evaluate_equal_weight_signal_portfolio(prices, config.universe, params, config)
@@ -395,8 +647,9 @@ def run_multi_asset(prices: pd.DataFrame, config: ResearchConfig, params: SmaPar
 
 
 def run_model_leaderboard(prices: pd.DataFrame, config: ResearchConfig, selected_params: SmaParameters) -> pd.DataFrame:
+    """Rank long-only variants on the train period only (no test leakage)."""
     rows = []
-    evaluation_prices = prices.loc[config.test_start : config.test_end or prices.index.max()]
+    evaluation_prices = prices.loc[config.train_start : config.train_end]
     variants = [
         ("long_cash", selected_params),
         ("fallback_spy", selected_params),
@@ -421,7 +674,8 @@ def run_model_leaderboard(prices: pd.DataFrame, config: ResearchConfig, selected
             variant=variant,
             cost_bps=10.0,
             initial_capital=config.initial_capital,
-            label="leaderboard_test",
+            label="leaderboard_train",
+            cash_proxy=config.cash_proxy_ticker,
         )
         rows.append(result["row"])
     table = pd.DataFrame(rows)
@@ -444,6 +698,7 @@ def run_hysteresis_sweep(prices: pd.DataFrame, config: ResearchConfig, period_na
             cost_bps=10.0,
             initial_capital=config.initial_capital,
             label=period_name,
+            cash_proxy=config.cash_proxy_ticker,
         )
         rows.append(result["row"])
     table = pd.DataFrame(rows)
@@ -457,7 +712,8 @@ def run_allocation_leaderboard(
     config: ResearchConfig,
     candidates: list[TrendAllocationParameters],
 ) -> pd.DataFrame:
-    evaluation_prices = prices.loc[config.test_start : config.test_end or prices.index.max()]
+    """Rank allocation variants on the train period only (no test leakage)."""
+    evaluation_prices = prices.loc[config.train_start : config.train_end]
     variants = [
         "long_cash_hysteresis",
         "long_spy_regime",
@@ -475,9 +731,10 @@ def run_allocation_leaderboard(
                 variant=variant,
                 cost_bps=10.0,
                 initial_capital=config.initial_capital,
-                label="allocation_test",
+                label="allocation_train",
                 market_regime_short_window=config.market_regime_short_window,
                 market_regime_long_window=config.market_regime_long_window,
+                cash_proxy=config.cash_proxy_ticker,
             )
             stress = evaluate_strategy(
                 prices=evaluation_prices,
@@ -486,9 +743,10 @@ def run_allocation_leaderboard(
                 variant=variant,
                 cost_bps=20.0,
                 initial_capital=config.initial_capital,
-                label="allocation_test_20bps",
+                label="allocation_train_20bps",
                 market_regime_short_window=config.market_regime_short_window,
                 market_regime_long_window=config.market_regime_long_window,
+                cash_proxy=config.cash_proxy_ticker,
             )
             row = result["row"] | {
                 "cagr_20bps": stress["row"]["cagr"],
@@ -532,6 +790,7 @@ def run_capture_analysis(
             label=model_label,
             market_regime_short_window=config.market_regime_short_window,
             market_regime_long_window=config.market_regime_long_window,
+            cash_proxy=config.cash_proxy_ticker,
         )
         row = result["row"]
         rows.append(
@@ -594,6 +853,7 @@ def run_v03_comparison(
             label=model_label,
             market_regime_short_window=config.market_regime_short_window,
             market_regime_long_window=config.market_regime_long_window,
+            cash_proxy=config.cash_proxy_ticker,
         )
         row = result["row"] | {
             "model": model_label,
@@ -623,6 +883,7 @@ def run_v03_cost_sensitivity(
             label="selected_v3",
             market_regime_short_window=config.market_regime_short_window,
             market_regime_long_window=config.market_regime_long_window,
+            cash_proxy=config.cash_proxy_ticker,
         )
         rows.append(result["row"] | {"selection_status": selected_model["selection_status"]})
     return pd.DataFrame(rows).sort_values("cost_bps").reset_index(drop=True)
@@ -639,19 +900,23 @@ def run_v04_research(
     risk_filter_sweep = run_risk_filter_sweep(train_prices, config, trend_candidates)
     capture_params = capture_parameter_grid(config, risk_filter_sweep)
 
-    v3_test = evaluate_strategy(
-        prices=test_prices,
+    # The v0.3 hurdle and every v0.4 candidate are evaluated on the train
+    # period; the selected model sees the test period only in the comparison
+    # tables below.
+    v3_train = evaluate_strategy(
+        prices=train_prices,
         ticker=config.base_ticker,
         params=selected_v3_model["params"],
         variant=selected_v3_model["variant"],
         cost_bps=10.0,
         initial_capital=config.initial_capital,
-        label="selected_v3",
+        label="selected_v3_train",
         market_regime_short_window=config.market_regime_short_window,
         market_regime_long_window=config.market_regime_long_window,
+        cash_proxy=config.cash_proxy_ticker,
     )
-    capture_leaderboard = run_capture_leaderboard(test_prices, config, capture_params, v3_test["row"])
-    selected_v4_model = select_capture_model(capture_leaderboard, config, v3_test["row"], selected_v3_model)
+    capture_leaderboard = run_capture_leaderboard(train_prices, config, capture_params, v3_train["row"])
+    selected_v4_model = select_capture_model(capture_leaderboard, config, v3_train["row"], selected_v3_model)
     v04_comparison, v04_curve = run_v04_comparison(prices, config, selected_v3_model, selected_v4_model)
     v04_cost_sensitivity = run_v04_cost_sensitivity(prices, config, selected_v4_model)
     benchmark_comparison = run_benchmark_comparison(prices, config, selected_v3_model, selected_v4_model)
@@ -676,6 +941,7 @@ def run_v04_research(
         "v04_comparison": v04_comparison,
         "v04_cost_sensitivity": v04_cost_sensitivity,
         "v04_curve": v04_curve,
+        "selected_v4_model": selected_v4_model,
     }
 
 
@@ -717,6 +983,7 @@ def run_risk_filter_sweep(
                                 label="capture_train",
                                 market_regime_short_window=config.market_regime_short_window,
                                 market_regime_long_window=config.market_regime_long_window,
+                                cash_proxy=config.cash_proxy_ticker,
                             )
                             rows.append(result["row"])
     table = pd.DataFrame(rows)
@@ -795,9 +1062,10 @@ def run_capture_leaderboard(
             variant=variant,
             cost_bps=10.0,
             initial_capital=config.initial_capital,
-            label="capture_test",
+            label="capture_train",
             market_regime_short_window=config.market_regime_short_window,
             market_regime_long_window=config.market_regime_long_window,
+            cash_proxy=config.cash_proxy_ticker,
         )
         stress = evaluate_strategy(
             prices=prices,
@@ -806,9 +1074,10 @@ def run_capture_leaderboard(
             variant=variant,
             cost_bps=20.0,
             initial_capital=config.initial_capital,
-            label="capture_test_20bps",
+            label="capture_train_20bps",
             market_regime_short_window=config.market_regime_short_window,
             market_regime_long_window=config.market_regime_long_window,
+            cash_proxy=config.cash_proxy_ticker,
         )
         rows.append(
             result["row"]
@@ -858,6 +1127,7 @@ def run_v04_comparison(
             label=model_label,
             market_regime_short_window=config.market_regime_short_window,
             market_regime_long_window=config.market_regime_long_window,
+            cash_proxy=config.cash_proxy_ticker,
         )
         rows.append(result["row"] | {"model": model_label, "selection_status": status})
         if model_label == "selected_v4":
@@ -883,6 +1153,7 @@ def run_v04_cost_sensitivity(
             label="selected_v4",
             market_regime_short_window=config.market_regime_short_window,
             market_regime_long_window=config.market_regime_long_window,
+            cash_proxy=config.cash_proxy_ticker,
         )
         rows.append(result["row"] | {"selection_status": selected_v4_model["selection_status"]})
     return pd.DataFrame(rows).sort_values("cost_bps").reset_index(drop=True)
@@ -895,15 +1166,21 @@ def run_benchmark_comparison(
     selected_v4_model: dict[str, Any],
 ) -> pd.DataFrame:
     evaluation_prices = prices.loc[config.test_start : config.test_end or prices.index.max()]
+    cash_returns = _cash_return_series(evaluation_prices, config.cash_proxy_ticker)
+    risk_free_rate = float(cash_returns.mean() * 252) if cash_returns is not None and not cash_returns.empty else 0.0
     rows = []
     for ticker in [config.base_ticker, "SPY", "QQQ"]:
         if ticker in evaluation_prices.columns:
-            rows.append(_buy_hold_benchmark_row(evaluation_prices[ticker], config.initial_capital, ticker))
+            rows.append(
+                _buy_hold_benchmark_row(
+                    evaluation_prices[ticker], config.initial_capital, ticker, risk_free_rate=risk_free_rate
+                )
+            )
     if {config.base_ticker, "QQQ"}.issubset(evaluation_prices.columns):
         blend_return = evaluation_prices[[config.base_ticker, "QQQ"]].pct_change().fillna(0.0).mean(axis=1)
         blend_equity = config.initial_capital * (1.0 + blend_return).cumprod()
         rows.append(
-            summarize_performance("50_50_aapl_qqq", blend_equity, blend_return)
+            summarize_performance("50_50_aapl_qqq", blend_equity, blend_return, risk_free_rate=risk_free_rate)
             | {"ticker": "AAPL_QQQ", "model": "50% AAPL / 50% QQQ", "variant": "static_blend"}
         )
     rows.append(
@@ -915,6 +1192,7 @@ def run_benchmark_comparison(
             10.0,
             config.initial_capital,
             "aapl_sma200_filter",
+            cash_proxy=config.cash_proxy_ticker,
         )["row"]
         | {"model": "AAPL SMA200 filter"}
     )
@@ -930,6 +1208,7 @@ def run_benchmark_comparison(
                 model,
                 config.market_regime_short_window,
                 config.market_regime_long_window,
+                cash_proxy=config.cash_proxy_ticker,
             )["row"]
             | {"model": model, "selection_status": selected["selection_status"]}
         )
@@ -1077,10 +1356,15 @@ def capture_variant(params: CaptureAwareAllocationParameters) -> str:
     return f"{prefix}_{fallback}_regime"
 
 
-def _buy_hold_benchmark_row(price: pd.Series, initial_capital: float, ticker: str) -> dict[str, Any]:
+def _buy_hold_benchmark_row(
+    price: pd.Series,
+    initial_capital: float,
+    ticker: str,
+    risk_free_rate: float = 0.0,
+) -> dict[str, Any]:
     returns = price.pct_change().fillna(0.0)
     equity = initial_capital * (1.0 + returns).cumprod()
-    return summarize_performance(f"{ticker}_buy_hold", equity, returns) | {
+    return summarize_performance(f"{ticker}_buy_hold", equity, returns, risk_free_rate=risk_free_rate) | {
         "ticker": ticker,
         "model": f"{ticker} buy and hold",
         "variant": "buy_hold",
@@ -1233,6 +1517,7 @@ def evaluate_strategy(
     label: str,
     market_regime_short_window: int = 50,
     market_regime_long_window: int = 200,
+    cash_proxy: str | None = None,
 ) -> dict[str, Any]:
     ticker = ticker.upper()
     if ticker not in prices.columns:
@@ -1302,12 +1587,19 @@ def evaluate_strategy(
         else:
             weights = build_single_asset_weights(ticker, signals.target_position)
 
+    cash_returns = _cash_return_series(prices, cash_proxy)
     returns = prices[available].pct_change().fillna(0.0)
     engine_result = run_weight_backtest(
         returns=returns,
         target_weights=weights,
         config=EngineConfig(initial_capital=initial_capital, cost_model=BpsCost(cost_bps)),
+        cash_returns=cash_returns,
     )
+    risk_free_rate = 0.0
+    if cash_returns is not None:
+        aligned_cash = cash_returns.reindex(returns.index).dropna()
+        if not aligned_cash.empty:
+            risk_free_rate = float(aligned_cash.mean() * 252)
     curve = _combine_curve(price, signals, engine_result.curve, engine_result.executed_weights, ticker, prices)
     row = summarize_curve(
         curve=curve,
@@ -1317,8 +1609,15 @@ def evaluate_strategy(
         variant=variant,
         params=params,
         cost_bps=cost_bps,
+        risk_free_rate=risk_free_rate,
     )
-    return {"row": row, "curve": curve, "metrics": pd.DataFrame([row])}
+    return {
+        "row": row,
+        "curve": curve,
+        "metrics": pd.DataFrame([row]),
+        "weights": engine_result.executed_weights,
+        "risk_free_rate": risk_free_rate,
+    }
 
 
 def evaluate_equal_weight_signal_portfolio(
@@ -1336,23 +1635,32 @@ def evaluate_equal_weight_signal_portfolio(
     if valid_tickers:
         target_weights = target_weights / len(valid_tickers)
     returns = prices[valid_tickers].pct_change().fillna(0.0)
+    cash_returns = _cash_return_series(prices, config.cash_proxy_ticker)
     result = run_weight_backtest(
         returns,
         target_weights,
         EngineConfig(initial_capital=config.initial_capital, cost_model=BpsCost(10.0)),
+        cash_returns=cash_returns,
     )
 
+    risk_free_rate = 0.0
+    if cash_returns is not None:
+        aligned_cash = cash_returns.reindex(returns.index).dropna()
+        if not aligned_cash.empty:
+            risk_free_rate = float(aligned_cash.mean() * 252)
     basket_return = returns.mean(axis=1)
     benchmark_equity = config.initial_capital * (1.0 + basket_return).cumprod()
-    closed = calculate_closed_trade_returns(result.curve["strategy_return"], result.executed_weights.abs().sum(axis=1))
+    total_exposure = result.executed_weights.abs().sum(axis=1)
+    closed = calculate_closed_trade_returns(result.curve["strategy_return"], total_exposure)
     win_rate = calculate_win_rate(closed)
     row = summarize_performance(
         name="equal_weight_signal_portfolio",
         equity=result.curve["strategy_equity"],
         returns=result.curve["strategy_return"],
-        trades=int((result.curve["turnover"] > 0).sum()),
+        trades=count_exposure_episodes(total_exposure),
         win_rate=win_rate,
-        exposure=float((result.executed_weights.abs().sum(axis=1) > 0).mean()),
+        risk_free_rate=risk_free_rate,
+        exposure=float((total_exposure > 0).mean()),
         turnover=annualized_turnover(result.curve["turnover"]),
         closed_trade_returns=closed,
         gross_equity=result.curve["gross_strategy_equity"],
@@ -1379,17 +1687,26 @@ def summarize_curve(
     variant: str,
     params: SmaParameters | TrendAllocationParameters | CaptureAwareAllocationParameters,
     cost_bps: float,
+    risk_free_rate: float = 0.0,
 ) -> dict[str, Any]:
-    closed = calculate_closed_trade_returns(curve["strategy_return"], executed_weights.abs().sum(axis=1))
+    total_exposure = executed_weights.abs().sum(axis=1)
+    closed = calculate_closed_trade_returns(curve["strategy_return"], total_exposure)
     win_rate = calculate_win_rate(closed)
-    benchmark_metrics = summarize_performance("benchmark", curve["buy_hold_equity"], curve["buy_hold_return"])
+    benchmark_metrics = summarize_performance(
+        "benchmark",
+        curve["buy_hold_equity"],
+        curve["buy_hold_return"],
+        risk_free_rate=risk_free_rate,
+    )
     ticker_weight = executed_weights.get(ticker, pd.Series(0.0, index=curve.index)).reindex(curve.index).fillna(0.0)
     fallback_columns = [column for column in executed_weights.columns if column != ticker]
     fallback_exposure = (
         float(executed_weights[fallback_columns].abs().sum(axis=1).mean()) if fallback_columns else 0.0
     )
     holds = holding_periods(ticker_weight)
-    trade_count = int((curve["turnover"] > 0).sum())
+    # Count exposure episodes, not turnover days: with volatility sizing the
+    # weight changes almost daily without opening or closing a trade.
+    trade_count = count_exposure_episodes(total_exposure)
     upside = capture_ratio(curve["strategy_return"], curve["buy_hold_return"], "up")
     downside = capture_ratio(curve["strategy_return"], curve["buy_hold_return"], "down")
     risk = getattr(params, "risk", None)
@@ -1400,7 +1717,8 @@ def summarize_curve(
         returns=curve["strategy_return"],
         trades=trade_count,
         win_rate=win_rate,
-        exposure=float((executed_weights.abs().sum(axis=1) > 0).mean()),
+        risk_free_rate=risk_free_rate,
+        exposure=float((total_exposure > 0).mean()),
         turnover=annualized_turnover(curve["turnover"]),
         closed_trade_returns=closed,
         gross_equity=curve["gross_strategy_equity"],
@@ -1410,6 +1728,7 @@ def summarize_curve(
         "ticker": ticker,
         "label": label,
         "variant": variant,
+        "risk_free_rate": risk_free_rate,
         "short_window": params.short_window,
         "long_window": params.long_window,
         "spread_threshold": getattr(params, "spread_threshold", 0.0),
@@ -1508,11 +1827,23 @@ def create_fixture_prices(config: ResearchConfig) -> pd.DataFrame:
         shock = 0.01 * np.sin(base / (7 + idx))
         returns = drift + seasonal / 252 + shock / 252
         prices[ticker] = 100 * (1.0 + pd.Series(returns, index=dates)).cumprod()
+    cash_ticker = config.cash_proxy_ticker
+    if cash_ticker and cash_ticker not in prices:
+        # Deterministic ~3% annual yield for the cash proxy.
+        daily_yield = 0.03 / 252
+        prices[cash_ticker] = 100 * (1.0 + pd.Series(daily_yield, index=dates)).cumprod()
     return pd.DataFrame(prices, index=dates)
 
 
+def _research_tickers(config: ResearchConfig) -> list[str]:
+    tickers = list(config.universe)
+    if config.cash_proxy_ticker and config.cash_proxy_ticker not in tickers:
+        tickers.append(config.cash_proxy_ticker)
+    return tickers
+
+
 def _download_prices(config: ResearchConfig) -> pd.DataFrame:
-    return download_adjusted_close(config.universe, start=config.start, end=config.end or default_end_date())
+    return download_adjusted_close(_research_tickers(config), start=config.start, end=config.end or default_end_date())
 
 
 def _combine_curve(

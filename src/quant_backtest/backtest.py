@@ -142,26 +142,33 @@ def apply_position_and_costs(
 def calculate_closed_trade_returns(
     returns: pd.Series,
     position: pd.Series,
+    epsilon: float = 1e-9,
 ) -> pd.Series:
-    position_change = position.diff().fillna(position)
-    entry_dates = list(position_change[position_change > 0].index)
-    exit_dates = list(position_change[position_change < 0].index)
+    """Compound strategy returns over exposure episodes.
+
+    A trade is one contiguous period where the absolute position exceeds
+    ``epsilon``. Daily weight changes inside an episode (e.g. volatility
+    sizing) do not open or close trades; only crossing to or from flat does.
+    The first flat day is included so exit costs land inside the trade.
+    """
+    exposed = position.astype(float).fillna(0.0).abs() > epsilon
+    previous = exposed.shift(1, fill_value=False)
+    entry_dates = list(position.index[exposed & ~previous])
+    exit_dates = list(position.index[~exposed & previous])
 
     closed_returns: list[float] = []
-    exit_cursor = 0
-
-    for entry_date in entry_dates:
-        while exit_cursor < len(exit_dates) and exit_dates[exit_cursor] <= entry_date:
-            exit_cursor += 1
-        if exit_cursor >= len(exit_dates):
-            break
-
-        exit_date = exit_dates[exit_cursor]
+    for entry_date, exit_date in zip(entry_dates, exit_dates):
         trade_returns = returns.loc[entry_date:exit_date]
         closed_returns.append(float((1.0 + trade_returns).prod() - 1.0))
-        exit_cursor += 1
 
     return pd.Series(closed_returns, name="closed_trade_return", dtype=float)
+
+
+def count_exposure_episodes(position: pd.Series, epsilon: float = 1e-9) -> int:
+    """Number of exposure episodes (entries), including a still-open one."""
+    exposed = position.astype(float).fillna(0.0).abs() > epsilon
+    previous = exposed.shift(1, fill_value=False)
+    return int((exposed & ~previous).sum())
 
 
 def calculate_win_rate(closed_trade_returns: pd.Series) -> float:

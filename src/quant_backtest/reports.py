@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import matplotlib
@@ -14,6 +15,7 @@ from openpyxl.styles import Font, PatternFill
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.table import Table, TableStyleInfo
 
+from .data import save_price_snapshot
 from .experiments import ResearchResult
 
 
@@ -38,6 +40,8 @@ CSV_OUTPUTS = {
     "benchmark_comparison.csv": "benchmark_comparison",
     "v04_comparison.csv": "v04_comparison",
     "v04_cost_sensitivity.csv": "v04_cost_sensitivity",
+    "final_model_walk_forward.csv": "final_walk_forward",
+    "significance_results.csv": "significance_results",
 }
 
 
@@ -65,6 +69,13 @@ def save_research_outputs(result: ResearchResult, output_dir: Path) -> None:
     result.v04_comparison.to_csv(output_dir / "v04_comparison.csv", index=False)
     result.v04_cost_sensitivity.to_csv(output_dir / "v04_cost_sensitivity.csv", index=False)
     result.v04_curve.to_csv(output_dir / "v04_selected_curve.csv", index_label="Date")
+    result.final_walk_forward.to_csv(output_dir / "final_model_walk_forward.csv", index=False)
+    result.significance_results.to_csv(output_dir / "significance_results.csv", index=False)
+
+    save_price_snapshot(result.prices, output_dir / "data_snapshot.csv")
+    if result.run_metadata:
+        with (output_dir / "run_manifest.json").open("w", encoding="utf-8") as file:
+            json.dump(result.run_metadata, file, indent=2, default=str)
 
     save_research_plots(result, output_dir)
     save_research_workbook(result, output_dir / "research_report.xlsx")
@@ -100,6 +111,7 @@ def save_research_plots(result: ResearchResult, output_dir: Path) -> None:
     _plot_regime_performance(result.regime_results, output_dir / "regime_performance.png")
     _plot_turnover_capture_spread(result.capture_leaderboard, output_dir / "turnover_capture_spread.png")
     _plot_exposure_sizing(result.v04_curve, output_dir / "exposure_sizing.png")
+    _plot_final_walk_forward(result.final_walk_forward, output_dir / "final_model_walk_forward.png")
 
 
 def save_research_workbook(result: ResearchResult, output_path: Path) -> None:
@@ -127,6 +139,8 @@ def save_research_workbook(result: ResearchResult, output_path: Path) -> None:
         "Benchmark Comparison": result.benchmark_comparison,
         "v0.4 Comparison": result.v04_comparison,
         "v0.4 Costs": result.v04_cost_sensitivity,
+        "Final Walk Forward": result.final_walk_forward,
+        "Significance": result.significance_results,
         "Raw Results": _raw_results(result),
     }
 
@@ -455,6 +469,21 @@ def _plot_exposure_sizing(curve: pd.DataFrame, output_path: Path) -> None:
     plt.close(fig)
 
 
+def _plot_final_walk_forward(table: pd.DataFrame, output_path: Path) -> None:
+    if table.empty or not {"model", "window_id", "cagr"}.issubset(table.columns):
+        return
+    pivot = table.pivot_table(index="window_id", columns="model", values="cagr", aggfunc="mean")
+    fig, axis = plt.subplots(figsize=(11, 6))
+    pivot.plot(kind="bar", ax=axis)
+    axis.set_title("Final models: CAGR per walk-forward window")
+    axis.set_xlabel("Window")
+    axis.set_ylabel("CAGR")
+    axis.grid(alpha=0.25, axis="y")
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=150)
+    plt.close(fig)
+
+
 def _write_dashboard(sheet, result: ResearchResult) -> None:
     sheet.sheet_view.showGridLines = False
     sheet["A1"] = "AAPL Trend Allocation Research Framework"
@@ -545,6 +574,8 @@ def _raw_results(result: ResearchResult) -> pd.DataFrame:
             result.benchmark_comparison.assign(source="benchmark_comparison"),
             result.v04_comparison.assign(source="v04_comparison"),
             result.v04_cost_sensitivity.assign(source="v04_cost_sensitivity"),
+            result.final_walk_forward.assign(source="final_walk_forward"),
+            result.significance_results.assign(source="significance_results"),
         ],
         ignore_index=True,
         sort=False,

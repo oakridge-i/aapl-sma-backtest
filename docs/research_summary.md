@@ -4,6 +4,13 @@ This project evaluates a long-only SMA timing model for AAPL and related assets.
 The current objective is not to force a profitable-looking chart, but to test
 whether the signal remains useful across reasonable assumptions.
 
+> **Methodology caveat (added in 0.5.0).** Versions 0.2-0.4 selected the final
+> model from leaderboards evaluated on the *test* period. That is a selection
+> leak: with enough candidates, picking the best test score inflates the
+> reported out-of-sample metrics. The numbers in the historical sections below
+> are kept for the record but should be read as optimistic. Section "v0.5
+> Honest Methodology" describes the fix.
+
 ## Baseline
 
 The first version used `SMA 20/100` on AAPL with 10 bps transaction costs.
@@ -146,15 +153,90 @@ The useful work from v0.4 is the new diagnostics:
 - `v04_entry_exit_signals.png` and `exposure_sizing.png` show the selected
   exposure path visually.
 
+## v0.5 Honest Methodology
+
+v0.5 changes how results are produced rather than what the model trades:
+
+1. **No selection on test data.** All leaderboards (v0.2 variants, v0.3
+   allocation, v0.4 capture) are now evaluated and ranked on the train period
+   only. The test period is evaluated once per final model. The v0.4 hurdle
+   ("beat the v0.3 model") also uses v0.3's train-period metrics.
+2. **Cash earns yield.** The uninvested weight earns the `BIL` T-bill proxy
+   return, and the same yield is subtracted as the risk-free rate in
+   Sharpe/Sortino. This removes the structural penalty against long/cash
+   models that sat in cash during 2022-2026 while rates were 4-5%.
+3. **Significance testing.** `significance_results.csv` reports, for each
+   final model on the test period: block-bootstrap 5/50/95 percentiles for
+   CAGR, Sharpe, and max drawdown; the probability of a negative Sharpe; the
+   Deflated Sharpe Ratio given how many candidates were tried during
+   selection; and a permutation p-value that asks whether the model's timing
+   beats random alignment of the same exposure profile with identical costs.
+4. **Final-model walk-forward.** The selected models are re-evaluated with
+   frozen parameters across every walk-forward test window
+   (`final_model_walk_forward.csv`), so one favorable train/test split cannot
+   carry the conclusion.
+5. **Reproducibility.** Each run writes `data_snapshot.csv` (hashed prices)
+   and `run_manifest.json` (config, data hash, package versions, git commit).
+   `research.py --data-snapshot` reruns on the saved data, which matters
+   because Yahoo Finance revises adjusted prices retroactively.
+6. **Honest trade stats.** Closed trades are segmented by exposure episodes,
+   so volatility-sizing weight changes no longer count as trades.
+
+Because the selection leak is gone, the v0.5 selected model and its metrics
+may differ from the v0.3/v0.4 numbers above. The next real-data run should be
+read as the new baseline, and the interesting question is whether the
+permutation p-value and Deflated Sharpe Ratio support any timing skill at all.
+
+### First Honest Run (2026-06-10, data through 2026-06-09)
+
+Selecting on the train period only (2015-2020), the framework picked
+`SMA 5/50` hysteresis (entry `0.0%`, exit `-0.5%`, 20-day hold, 5-day
+cooldown) as the v0.3 model; v0.4 again retained it with
+`no_robust_upgrade_baseline_retained`. On the test period (2021-2026), with
+cash earning the BIL yield and Sharpe measured against that risk-free rate:
+
+| Metric | Selected model (test) | AAPL buy-and-hold (test) |
+| --- | ---: | ---: |
+| CAGR | 5.89% | 17.50% |
+| Sharpe (excess) | 0.24 | 0.61 |
+| Max drawdown | -29.10% | -33.36% |
+| Annualized turnover | 7.21 | - |
+
+Significance diagnostics for the selected model on the test period:
+
+| Diagnostic | Value |
+| --- | ---: |
+| Bootstrap Sharpe 5-95% interval | -0.57 to +1.01 |
+| Probability of negative Sharpe | 33.9% |
+| Deflated Sharpe Ratio | 0.54 |
+| Permutation p-value (timing skill) | 0.71 |
+
+The interpretation is blunt: the previously reported v0.3 numbers (CAGR
+`11.00%`, Sharpe `0.66`, turnover `1.68`) were an artifact of selecting the
+best test-period candidate. Selected honestly, the model underperforms both
+the benchmark and the plain `SMA 20/100` baseline on the test period, and the
+permutation test finds no evidence that its timing beats random alignment of
+the same exposure profile (p = 0.71). The per-window walk-forward shows the
+expected trend-following shape - it cushioned 2022 (-8.6% vs -28.5% for AAPL)
+and lagged every strong up year.
+
+The framework is working as intended: it now correctly reports that this
+family of long-only SMA timing rules on AAPL has no demonstrated alpha. The
+honest baseline to beat going forward is AAPL buy-and-hold and the SMA200
+filter (test CAGR `9.21%`, Sharpe `0.40`), with risk management as the only
+proven benefit (drawdown cushioning in bear regimes).
+
 ## Next Research Steps
 
-1. Make fallback allocation slower and more selective so it does not recreate
+1. Re-run the full workflow on fresh data and re-baseline the conclusions on
+   the honest pipeline (train-only selection, cash yield, significance).
+2. Make fallback allocation slower and more selective so it does not recreate
    the v0.2 turnover problem.
-2. Add an explicit cash-yield or Treasury-bill proxy, because long/cash models
-   are currently penalized as if cash earns zero.
 3. Improve upside capture before adding shorts. The model still exits too much
    upside during strong AAPL regimes.
 4. Use regime diagnostics to tune risk filters by failure mode, especially bear
    and recovery periods.
 5. Consider multi-signal confirmation only after the current long-only rules
    produce a better capture spread.
+6. Address survivorship bias in the multi-asset universe (the current tickers
+   are known winners chosen in hindsight).
