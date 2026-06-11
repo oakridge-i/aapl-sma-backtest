@@ -33,8 +33,10 @@ treated as optimistic; the 0.5 reports supersede them.
 - `main.py` - CLI entrypoint for downloading data and running the backtest.
 - `research.py` - CLI entrypoint for the robustness research workflow.
 - `configs/research_v6.yaml` - 0.6-dev configuration: v5 plus parallel sweep
-  execution, nested walk-forward selection, and PBO (probability of backtest
-  overfitting) diagnostics.
+  execution, nested walk-forward selection, PBO (probability of backtest
+  overfitting) diagnostics, five extra signal families (time-series momentum,
+  Donchian breakout, ATR trend strength, dual momentum, 52-week-high), and
+  equal-vote ensemble selection.
 - `configs/research_v5.yaml` - default configuration: cash yield, train-only
   selection, and significance testing enabled.
 - `configs/research_v4.yaml` - capture-aware configuration, kept compatible.

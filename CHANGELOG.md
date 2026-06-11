@@ -2,6 +2,50 @@
 
 All notable project changes are documented here.
 
+## Unreleased (0.6.0 M2 - Signal Families and Ensemble)
+
+The first genuine model-search expansion since the SMA crossover, built on
+the M1 honest-selection machinery.
+
+### Added
+
+- Five long-only signal families (`quant_backtest.signal_families`), each
+  registered with the strategy registry:
+  - time-series momentum (3/6/12-month absolute momentum with optional
+    hold/cooldown rules);
+  - Donchian channel breakout (enter on an N-day high, exit on an M-day low,
+    channels lagged one day);
+  - ATR-scaled trend strength (continuous exposure from 0 at the SMA to 1 at
+    `scale` ATRs above it; close-to-close ATR proxy);
+  - dual momentum (long only when the asset beats the market and its own
+    zero hurdle over the lookback);
+  - 52-week-high proximity with entry/exit hysteresis.
+- Equal-vote ensemble (`EnsembleVoteStrategy`): exposure is the mean of
+  member target positions. The search is over which families participate
+  (subset combinations), not over a dense parameter grid, which keeps the
+  selection degrees of freedom small. A frozen canonical trend member (the
+  published v0.3 parameterization) can join without adding search space.
+- Train-only selection pipeline (`quant_backtest.ensemble_research`):
+  per-family grids -> one champion per family -> ensemble candidate subsets
+  -> 20 bps stress -> selection with retained-baseline fallback. Outputs:
+  `family_leaderboard.csv`, `ensemble_leaderboard.csv`, `v06_comparison.csv`,
+  `v06_cost_sensitivity.csv`, `v06_selected_curve.csv`.
+- Nested ensemble walk-forward: family champions and the ensemble
+  composition are re-selected inside every walk-forward window; the stitched
+  OOS series is bootstrapped in `significance_results.csv`
+  (`nested_ensemble_oos_stitched`). Outputs:
+  `nested_ensemble_walk_forward.csv`, `nested_ensemble_summary.csv`.
+- `selected_v6` joins the final-model walk-forward and the significance
+  table (bootstrap, Deflated Sharpe against the ensemble leaderboard,
+  permutation test).
+- `signal_families` and `ensemble` sections in `configs/research_v6.yaml`.
+
+### Changed
+
+- `evaluate_strategy` gained a generic dispatch path for registry families
+  (including ones that need the market price series), so new families work
+  through every sweep without bespoke branches.
+
 ## Unreleased (0.6.0 M1 - Research Foundation)
 
 Engineering and methodology groundwork for the 0.6.0 model-improvement cycle.

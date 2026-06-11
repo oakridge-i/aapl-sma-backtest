@@ -33,6 +33,7 @@ class StrategyFamily:
     params_type: type
     strategy_type: type
     needs_market_context: bool = False
+    needs_market_price: bool = False
     params_from_config: Callable[[dict[str, Any]], Any] | None = None
 
 

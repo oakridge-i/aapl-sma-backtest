@@ -35,6 +35,33 @@ pbo:
   enabled: true
   max_candidates: 200
   blocks: 12
+signal_families:
+  # Long-only signal families beyond the SMA crossover. Each family has a
+  # small grid; one champion per family is picked on the train period.
+  enabled: true
+  ts_momentum:
+    lookbacks: [63, 126, 252]
+  donchian:
+    entry_windows: [55, 100, 252]
+    exit_windows: [20, 50]
+  atr_trend:
+    sma_windows: [100, 200]
+    atr_windows: [20]
+    scales: [2.0, 3.0]
+  dual_momentum:
+    lookbacks: [126, 252]
+    market: SPY
+  high_52w:
+    window: 252
+    entry_thresholds: [0.90, 0.95]
+    exit_thresholds: [0.80, 0.85]
+ensemble:
+  # The ensemble search is over which families participate (equal vote),
+  # not over a dense parameter grid.
+  min_members: 3
+  max_members: 6
+  include_trend_baseline: true
+  turnover_limit: 6.0
 cost_bps:
   - 0
   - 5

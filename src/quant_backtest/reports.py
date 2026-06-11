@@ -45,6 +45,12 @@ CSV_OUTPUTS = {
     "nested_walk_forward.csv": "nested_walk_forward",
     "nested_walk_forward_summary.csv": "nested_walk_forward_summary",
     "pbo_results.csv": "pbo_results",
+    "family_leaderboard.csv": "family_leaderboard",
+    "ensemble_leaderboard.csv": "ensemble_leaderboard",
+    "v06_comparison.csv": "v06_comparison",
+    "v06_cost_sensitivity.csv": "v06_cost_sensitivity",
+    "nested_ensemble_walk_forward.csv": "nested_ensemble_walk_forward",
+    "nested_ensemble_summary.csv": "nested_ensemble_summary",
 }
 
 
@@ -77,6 +83,13 @@ def save_research_outputs(result: ResearchResult, output_dir: Path) -> None:
     result.nested_walk_forward.to_csv(output_dir / "nested_walk_forward.csv", index=False)
     result.nested_walk_forward_summary.to_csv(output_dir / "nested_walk_forward_summary.csv", index=False)
     result.pbo_results.to_csv(output_dir / "pbo_results.csv", index=False)
+    result.family_leaderboard.to_csv(output_dir / "family_leaderboard.csv", index=False)
+    result.ensemble_leaderboard.to_csv(output_dir / "ensemble_leaderboard.csv", index=False)
+    result.v06_comparison.to_csv(output_dir / "v06_comparison.csv", index=False)
+    result.v06_cost_sensitivity.to_csv(output_dir / "v06_cost_sensitivity.csv", index=False)
+    result.v06_curve.to_csv(output_dir / "v06_selected_curve.csv", index_label="Date")
+    result.nested_ensemble_walk_forward.to_csv(output_dir / "nested_ensemble_walk_forward.csv", index=False)
+    result.nested_ensemble_summary.to_csv(output_dir / "nested_ensemble_summary.csv", index=False)
 
     save_price_snapshot(result.prices, output_dir / "data_snapshot.csv")
     if result.run_metadata:
@@ -118,6 +131,8 @@ def save_research_plots(result: ResearchResult, output_dir: Path) -> None:
     _plot_turnover_capture_spread(result.capture_leaderboard, output_dir / "turnover_capture_spread.png")
     _plot_exposure_sizing(result.v04_curve, output_dir / "exposure_sizing.png")
     _plot_final_walk_forward(result.final_walk_forward, output_dir / "final_model_walk_forward.png")
+    _plot_v06_comparison(result.v06_comparison, output_dir / "v06_comparison.png")
+    _plot_allocation_exposure(result.v06_curve, output_dir / "v06_exposure.png")
 
 
 def save_research_workbook(result: ResearchResult, output_path: Path) -> None:
@@ -150,6 +165,12 @@ def save_research_workbook(result: ResearchResult, output_path: Path) -> None:
         "Nested Walk Forward": result.nested_walk_forward,
         "Nested WF Summary": result.nested_walk_forward_summary,
         "PBO": result.pbo_results,
+        "Family Leaderboard": result.family_leaderboard,
+        "Ensemble Leaderboard": result.ensemble_leaderboard,
+        "v0.6 Comparison": result.v06_comparison,
+        "v0.6 Costs": result.v06_cost_sensitivity,
+        "Nested Ensemble WF": result.nested_ensemble_walk_forward,
+        "Nested Ensemble Summary": result.nested_ensemble_summary,
         "Raw Results": _raw_results(result),
     }
 
@@ -493,6 +514,18 @@ def _plot_final_walk_forward(table: pd.DataFrame, output_path: Path) -> None:
     plt.close(fig)
 
 
+def _plot_v06_comparison(table: pd.DataFrame, output_path: Path) -> None:
+    if table.empty or not {"model", "cagr", "sharpe"}.issubset(table.columns):
+        return
+    fig, axis = plt.subplots(figsize=(11, 6))
+    table.plot(kind="bar", x="model", y=["cagr", "sharpe"], ax=axis)
+    axis.set_title("v0.6 candidates on the test period")
+    axis.grid(alpha=0.25, axis="y")
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=150)
+    plt.close(fig)
+
+
 def _write_dashboard(sheet, result: ResearchResult) -> None:
     sheet.sheet_view.showGridLines = False
     sheet["A1"] = "AAPL Trend Allocation Research Framework"
@@ -585,6 +618,10 @@ def _raw_results(result: ResearchResult) -> pd.DataFrame:
             result.v04_cost_sensitivity.assign(source="v04_cost_sensitivity"),
             result.final_walk_forward.assign(source="final_walk_forward"),
             result.significance_results.assign(source="significance_results"),
+            result.family_leaderboard.assign(source="family_leaderboard"),
+            result.ensemble_leaderboard.assign(source="ensemble_leaderboard"),
+            result.v06_comparison.assign(source="v06_comparison"),
+            result.nested_ensemble_walk_forward.assign(source="nested_ensemble_walk_forward"),
         ],
         ignore_index=True,
         sort=False,

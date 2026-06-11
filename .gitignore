@@ -14,6 +14,7 @@ outputs_fixture_v3/
 outputs_fixture_v4/
 outputs_fixture_v5/
 outputs_fixture_v6/
+outputs_v6_preview/
 *.egg-info/
 build/
 dist/

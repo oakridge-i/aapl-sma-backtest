@@ -111,7 +111,7 @@ def evaluate_strategy(
             weights = build_hybrid_regime_weights(ticker, "QQQ", signals, params, regime)
         else:
             weights = build_single_asset_weights(ticker, signals.target_position)
-    else:
+    elif isinstance(params, SmaParameters):
         signals = strategy.generate(price)
         if variant == "fallback_spy" and "SPY" in prices.columns:
             weights = build_fallback_weights(ticker, "SPY", signals.target_position)
@@ -119,6 +119,15 @@ def evaluate_strategy(
             weights = build_fallback_weights(ticker, "QQQ", signals.target_position)
         else:
             weights = build_single_asset_weights(ticker, signals.target_position)
+    else:
+        # Generic single-asset long/cash family from the registry.
+        if family.needs_market_price:
+            market_ticker = str(getattr(params, "market_ticker", "SPY")).upper()
+            market_price = prices[market_ticker] if market_ticker in prices.columns else None
+            signals = strategy.generate(price, market_price=market_price)
+        else:
+            signals = strategy.generate(price)
+        weights = build_single_asset_weights(ticker, signals.target_position)
 
     cash_returns = cash_return_series(prices, cash_proxy)
     returns = prices[available].pct_change().fillna(0.0)
@@ -262,8 +271,8 @@ def summarize_curve(
         "label": label,
         "variant": variant,
         "risk_free_rate": risk_free_rate,
-        "short_window": params.short_window,
-        "long_window": params.long_window,
+        "short_window": getattr(params, "short_window", np.nan),
+        "long_window": getattr(params, "long_window", np.nan),
         "spread_threshold": getattr(params, "spread_threshold", 0.0),
         "momentum_window": np.nan if getattr(params, "momentum_window", None) is None else params.momentum_window,
         "partial_exposure": getattr(params, "partial_exposure", False),

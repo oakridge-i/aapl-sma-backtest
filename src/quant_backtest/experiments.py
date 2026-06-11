@@ -56,6 +56,18 @@ from .selection import (  # noqa: F401  (re-exported)
     trend_params_from_row,
     trend_selection_mask,
 )
+from .ensemble_research import (  # noqa: F401  (re-exported)
+    CANONICAL_TREND_MEMBER,
+    build_ensemble_candidates,
+    family_parameter_grids,
+    run_ensemble_leaderboard,
+    run_family_sweep,
+    run_nested_ensemble_walk_forward,
+    run_v06_comparison,
+    run_v06_cost_sensitivity,
+    select_ensemble_model,
+    select_family_champions,
+)
 from .significance import run_pbo_analysis, run_significance_analysis  # noqa: F401  (re-exported)
 from .strategies import SmaParameters
 from .sweeps import (  # noqa: F401  (re-exported)
@@ -120,6 +132,13 @@ class ResearchResult:
     nested_walk_forward: pd.DataFrame = field(default_factory=pd.DataFrame)
     nested_walk_forward_summary: pd.DataFrame = field(default_factory=pd.DataFrame)
     pbo_results: pd.DataFrame = field(default_factory=pd.DataFrame)
+    family_leaderboard: pd.DataFrame = field(default_factory=pd.DataFrame)
+    ensemble_leaderboard: pd.DataFrame = field(default_factory=pd.DataFrame)
+    v06_comparison: pd.DataFrame = field(default_factory=pd.DataFrame)
+    v06_cost_sensitivity: pd.DataFrame = field(default_factory=pd.DataFrame)
+    v06_curve: pd.DataFrame = field(default_factory=pd.DataFrame)
+    nested_ensemble_walk_forward: pd.DataFrame = field(default_factory=pd.DataFrame)
+    nested_ensemble_summary: pd.DataFrame = field(default_factory=pd.DataFrame)
     run_metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -187,6 +206,25 @@ def run_research(
             "selected_v4_model": None,
         }
 
+    # M2: signal families and ensemble selection (train-only ranking).
+    family_leaderboard = pd.DataFrame()
+    ensemble_leaderboard = pd.DataFrame()
+    v06_comparison = pd.DataFrame()
+    v06_cost_sensitivity = pd.DataFrame()
+    v06_curve = pd.DataFrame()
+    selected_v6_model: dict[str, Any] | None = None
+    family_champions: dict[str, Any] = {}
+    if config.enable_signal_families:
+        family_leaderboard, family_params = run_family_sweep(train_prices, config)
+        family_champions = select_family_champions(family_leaderboard, family_params, config)
+        ensemble_candidates = build_ensemble_candidates(family_champions, config)
+        ensemble_leaderboard = run_ensemble_leaderboard(train_prices, config, ensemble_candidates)
+        selected_v6_model = select_ensemble_model(ensemble_leaderboard, ensemble_candidates, selected_model)
+        v06_comparison, v06_curve = run_v06_comparison(
+            prices, config, selected_model, family_champions, selected_v6_model
+        )
+        v06_cost_sensitivity = run_v06_cost_sensitivity(prices, config, selected_v6_model)
+
     final_models: list[tuple[str, Any, str]] = [
         ("baseline_sma_20_100", SmaParameters(20, 100), "long_cash"),
         ("selected_v2", selected_params, "long_cash"),
@@ -195,14 +233,27 @@ def run_research(
     if v04.get("selected_v4_model"):
         v4_model = v04["selected_v4_model"]
         final_models.append(("selected_v4", v4_model["params"], v4_model["variant"]))
+    if selected_v6_model is not None:
+        final_models.append(("selected_v6", selected_v6_model["params"], selected_v6_model["variant"]))
     final_walk_forward = run_final_model_walk_forward(prices, config, final_models)
 
     nested = {"windows": pd.DataFrame(), "summary": pd.DataFrame(), "oos_returns": pd.Series(dtype=float)}
+    nested_ensemble = {"windows": pd.DataFrame(), "summary": pd.DataFrame(), "oos_returns": pd.Series(dtype=float)}
     if config.enable_nested_walk_forward:
         nested = run_nested_walk_forward(prices, config)
+        if config.enable_signal_families:
+            nested_ensemble = run_nested_ensemble_walk_forward(prices, config, selected_model)
 
     significance_results = pd.DataFrame()
     if config.enable_significance:
+        extra_models = []
+        extra_stitched = []
+        if selected_v6_model is not None:
+            extra_models.append(
+                ("selected_v6", selected_v6_model["params"], selected_v6_model["variant"], ensemble_leaderboard)
+            )
+        if not nested_ensemble["oos_returns"].empty:
+            extra_stitched.append(("nested_ensemble_oos_stitched", nested_ensemble["oos_returns"]))
         significance_results = run_significance_analysis(
             prices=prices,
             config=config,
@@ -211,6 +262,8 @@ def run_research(
             allocation_leaderboard=allocation_leaderboard,
             capture_leaderboard=v04["capture_leaderboard"],
             nested_oos_returns=nested["oos_returns"] if config.enable_nested_walk_forward else None,
+            extra_models=extra_models or None,
+            extra_stitched=extra_stitched or None,
         )
 
     pbo_results = pd.DataFrame()
@@ -249,6 +302,13 @@ def run_research(
         nested_walk_forward=nested["windows"],
         nested_walk_forward_summary=nested["summary"],
         pbo_results=pbo_results,
+        family_leaderboard=family_leaderboard,
+        ensemble_leaderboard=ensemble_leaderboard,
+        v06_comparison=v06_comparison,
+        v06_cost_sensitivity=v06_cost_sensitivity,
+        v06_curve=v06_curve,
+        nested_ensemble_walk_forward=nested_ensemble["windows"],
+        nested_ensemble_summary=nested_ensemble["summary"],
         run_metadata=run_metadata,
     )
 

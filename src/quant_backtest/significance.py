@@ -29,6 +29,8 @@ def run_significance_analysis(
     allocation_leaderboard: pd.DataFrame,
     capture_leaderboard: pd.DataFrame,
     nested_oos_returns: pd.Series | None = None,
+    extra_models: list[tuple[str, Any, str, pd.DataFrame]] | None = None,
+    extra_stitched: list[tuple[str, pd.Series]] | None = None,
 ) -> pd.DataFrame:
     """Bootstrap, Deflated Sharpe, and permutation diagnostics on the test period."""
     test_prices = prices.loc[config.test_start : config.test_end or prices.index.max()]
@@ -39,6 +41,8 @@ def run_significance_analysis(
         models.append(
             ("selected_v4", selected_v4_model["params"], selected_v4_model["variant"], capture_leaderboard)
         )
+    if extra_models:
+        models.extend(extra_models)
 
     rows: list[dict[str, Any]] = []
     for model_label, params, variant, trials_table in models:
@@ -93,6 +97,9 @@ def run_significance_analysis(
 
     if nested_oos_returns is not None and not nested_oos_returns.empty:
         rows.append(_stitched_oos_significance(nested_oos_returns, prices, config))
+    for label, stitched_returns in extra_stitched or []:
+        if stitched_returns is not None and not stitched_returns.empty:
+            rows.append(_stitched_oos_significance(stitched_returns, prices, config, model_label=label))
     return pd.DataFrame(rows)
 
 
@@ -100,6 +107,7 @@ def _stitched_oos_significance(
     oos_returns: pd.Series,
     prices: pd.DataFrame,
     config: ResearchConfig,
+    model_label: str = "nested_oos_stitched",
 ) -> dict[str, Any]:
     """Bootstrap diagnostics for the stitched nested walk-forward OOS series.
 
@@ -121,7 +129,7 @@ def _stitched_oos_significance(
     if std > 0:
         observed_sharpe = float((clean.mean() * 252 - risk_free_rate) / (std * (252**0.5)))
     row: dict[str, Any] = {
-        "model": "nested_oos_stitched",
+        "model": model_label,
         "variant": "per_window_selection",
         "period_start": str(clean.index.min().date()),
         "period_end": str(clean.index.max().date()),
