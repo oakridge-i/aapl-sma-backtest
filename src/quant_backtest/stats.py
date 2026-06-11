@@ -152,6 +152,84 @@ def deflated_sharpe_ratio(
     }
 
 
+def probability_of_backtest_overfitting(
+    candidate_returns: pd.DataFrame,
+    n_blocks: int = 12,
+    max_candidates: int = 200,
+) -> dict[str, float]:
+    """CSCV Probability of Backtest Overfitting (Bailey et al., 2017).
+
+    ``candidate_returns`` holds one column of daily net returns per candidate
+    configuration over a common period. The sample is cut into ``n_blocks``
+    contiguous blocks; for every combination of half the blocks (in-sample)
+    the best candidate by IS Sharpe is picked and its *relative rank* by OOS
+    Sharpe on the complementary blocks is recorded. PBO is the share of
+    combinations where the IS winner lands in the worse half OOS — for pure
+    noise it sits near 0.5, for a real edge near 0, and above 0.5 means the
+    selection actively picks OOS losers.
+
+    Candidate count is capped with an evenly spaced subset (columns are
+    expected to be ordered by selection score, so the subset spans the
+    quality spectrum).
+    """
+    import itertools
+
+    clean = candidate_returns.dropna(axis=0, how="any")
+    n_obs, n_candidates = clean.shape
+    if n_candidates < 2 or n_blocks < 4 or n_blocks % 2 != 0 or n_obs < n_blocks * 21:
+        return {}
+
+    if n_candidates > max_candidates:
+        keep = np.unique(np.linspace(0, n_candidates - 1, max_candidates).astype(int))
+        clean = clean.iloc[:, keep]
+        n_candidates = clean.shape[1]
+
+    block_length = n_obs // n_blocks
+    usable = block_length * n_blocks
+    values = clean.to_numpy()[:usable]
+    blocks = values.reshape(n_blocks, block_length, n_candidates)
+    block_sum = blocks.sum(axis=1).T  # [candidates, blocks]
+    block_sumsq = (blocks**2).sum(axis=1).T
+
+    half = n_blocks // 2
+    combos = list(itertools.combinations(range(n_blocks), half))
+    mask = np.zeros((len(combos), n_blocks))
+    for combo_idx, combo in enumerate(combos):
+        mask[combo_idx, list(combo)] = 1.0
+
+    def sharpe_matrix(sums: np.ndarray, sumsqs: np.ndarray, n: float) -> np.ndarray:
+        mean = sums / n
+        variance = np.maximum(sumsqs / n - mean**2, 0.0)
+        std = np.sqrt(variance)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            sharpe = np.where(std > 0, mean / std * math.sqrt(TRADING_DAYS_PER_YEAR), -np.inf)
+        return sharpe
+
+    n_is = float(half * block_length)
+    is_sum = block_sum @ mask.T  # [candidates, combos]
+    is_sumsq = block_sumsq @ mask.T
+    oos_sum = block_sum.sum(axis=1, keepdims=True) - is_sum
+    oos_sumsq = block_sumsq.sum(axis=1, keepdims=True) - is_sumsq
+    is_sharpe = sharpe_matrix(is_sum, is_sumsq, n_is)
+    oos_sharpe = sharpe_matrix(oos_sum, oos_sumsq, n_is)
+
+    best = is_sharpe.argmax(axis=0)  # [combos]
+    best_oos = oos_sharpe[best, np.arange(len(combos))]
+    # Relative OOS rank of the IS winner among all candidates.
+    below = (oos_sharpe < best_oos[None, :]).sum(axis=0)
+    omega = (below + 1.0) / (n_candidates + 1.0)
+    logits = np.log(omega / (1.0 - omega))
+
+    return {
+        "pbo": float((logits < 0).mean()),
+        "n_candidates": float(n_candidates),
+        "n_blocks": float(n_blocks),
+        "n_combinations": float(len(combos)),
+        "mean_logit": float(logits.mean()),
+        "median_oos_relative_rank": float(np.median(omega)),
+    }
+
+
 def timing_permutation_pvalue(
     executed_weights: pd.DataFrame,
     asset_returns: pd.DataFrame,

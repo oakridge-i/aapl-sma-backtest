@@ -3,7 +3,7 @@
 from .backtest import BacktestConfig, BacktestResult, run_sma_backtest
 from .experiments import ResearchConfig, ResearchResult, run_research
 
-__version__ = "0.5.0"
+__version__ = "0.6.0.dev0"
 
 __all__ = [
     "BacktestConfig",

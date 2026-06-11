@@ -226,6 +226,46 @@ honest baseline to beat going forward is AAPL buy-and-hold and the SMA200
 filter (test CAGR `9.21%`, Sharpe `0.40`), with risk management as the only
 proven benefit (drawdown cushioning in bear regimes).
 
+## v0.6-dev: Signal Families and Ensemble (preview)
+
+The 0.6 development line attacks the diagnosis from 0.5 ("one SMA family,
+no demonstrated alpha") in two ways. First, five additional long-only signal
+families: time-series momentum, Donchian breakout, ATR-scaled trend strength,
+dual momentum versus SPY, and 52-week-high proximity. Second, an equal-vote
+ensemble whose search space is *which families participate* (one champion per
+family, picked on train, then subset combinations) - a few dozen candidates
+instead of thousands of grid pixels.
+
+The primary scoreboard is nested walk-forward selection: the entire pipeline
+(family champions, ensemble composition) re-runs inside every walk-forward
+window and the selected model is evaluated on that window's out-of-sample
+slice. The stitched OOS series cannot be contaminated by selection.
+
+Preview results (data through 2026-06-09, stitched windows 2018-2026):
+
+| Metric | Nested ensemble OOS | AAPL buy-and-hold (same windows) |
+| --- | ---: | ---: |
+| CAGR | 11.7% | 27.7% |
+| Sharpe (excess) | 0.91 | 0.96 |
+| Max drawdown | -13.9% | -38.6% |
+| Bootstrap Sharpe 5-95% | +0.32 to +1.46 | - |
+| P(true Sharpe < 0) | 0.2% | - |
+
+Interpretation:
+
+- This is the first result in the project whose bootstrap interval is
+  entirely positive. The annually re-selected ensemble nearly matches
+  buy-and-hold risk-adjusted returns at roughly one third of the drawdown.
+- A frozen composition does not survive: selected once on 2015-2020 it earns
+  a test Sharpe of only `0.08`, and most individual family champions are
+  unprofitable out of sample. The deliverable is the re-selection procedure,
+  not a fixed model.
+- Raw CAGR still trails buy-and-hold, so the honest framing remains
+  risk-managed participation rather than alpha. Whether that trade-off is
+  attractive depends on the investor's drawdown tolerance.
+- These are preview numbers; the 0.6.0 release will re-run everything and
+  apply the acceptance gate (bootstrap interval, DSR, PBO, turnover limits).
+
 ## Next Research Steps
 
 1. Re-run the full workflow on fresh data and re-baseline the conclusions on

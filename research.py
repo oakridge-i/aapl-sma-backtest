@@ -58,6 +58,26 @@ def main() -> None:
     else:
         print(result.model_leaderboard.head(10).to_string(index=False))
 
+    if not result.v06_comparison.empty:
+        print()
+        print("v0.6 candidates on the test period:")
+        columns = [
+            column
+            for column in ["model", "selection_status", "cagr", "sharpe", "max_drawdown", "turnover", "exposure"]
+            if column in result.v06_comparison.columns
+        ]
+        print(result.v06_comparison[columns].to_string(index=False))
+
+    if not result.nested_ensemble_summary.empty:
+        print()
+        print("Nested ensemble walk-forward (stitched OOS):")
+        columns = [
+            column
+            for column in ["name", "cagr", "sharpe", "max_drawdown", "windows", "windows_beating_benchmark"]
+            if column in result.nested_ensemble_summary.columns
+        ]
+        print(result.nested_ensemble_summary[columns].to_string(index=False))
+
     if not result.significance_results.empty:
         print()
         print("Significance (test period, selection done on train only):")

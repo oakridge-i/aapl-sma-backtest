@@ -2,6 +2,104 @@
 
 All notable project changes are documented here.
 
+## Unreleased (0.6.0 M2 - Signal Families and Ensemble)
+
+The first genuine model-search expansion since the SMA crossover, built on
+the M1 honest-selection machinery.
+
+### Added
+
+- Five long-only signal families (`quant_backtest.signal_families`), each
+  registered with the strategy registry:
+  - time-series momentum (3/6/12-month absolute momentum with optional
+    hold/cooldown rules);
+  - Donchian channel breakout (enter on an N-day high, exit on an M-day low,
+    channels lagged one day);
+  - ATR-scaled trend strength (continuous exposure from 0 at the SMA to 1 at
+    `scale` ATRs above it; close-to-close ATR proxy);
+  - dual momentum (long only when the asset beats the market and its own
+    zero hurdle over the lookback);
+  - 52-week-high proximity with entry/exit hysteresis.
+- Equal-vote ensemble (`EnsembleVoteStrategy`): exposure is the mean of
+  member target positions. The search is over which families participate
+  (subset combinations), not over a dense parameter grid, which keeps the
+  selection degrees of freedom small. A frozen canonical trend member (the
+  published v0.3 parameterization) can join without adding search space.
+- Train-only selection pipeline (`quant_backtest.ensemble_research`):
+  per-family grids -> one champion per family -> ensemble candidate subsets
+  -> 20 bps stress -> selection with retained-baseline fallback. Outputs:
+  `family_leaderboard.csv`, `ensemble_leaderboard.csv`, `v06_comparison.csv`,
+  `v06_cost_sensitivity.csv`, `v06_selected_curve.csv`.
+- Nested ensemble walk-forward: family champions and the ensemble
+  composition are re-selected inside every walk-forward window; the stitched
+  OOS series is bootstrapped in `significance_results.csv`
+  (`nested_ensemble_oos_stitched`). Outputs:
+  `nested_ensemble_walk_forward.csv`, `nested_ensemble_summary.csv`.
+- `selected_v6` joins the final-model walk-forward and the significance
+  table (bootstrap, Deflated Sharpe against the ensemble leaderboard,
+  permutation test).
+- `signal_families` and `ensemble` sections in `configs/research_v6.yaml`.
+
+### Changed
+
+- `evaluate_strategy` gained a generic dispatch path for registry families
+  (including ones that need the market price series), so new families work
+  through every sweep without bespoke branches.
+
+### Findings (preview run, data through 2026-06-09)
+
+- The nested-walk-forward ensemble (composition re-selected every window)
+  earned a stitched OOS Sharpe of `0.91` with max drawdown `-13.9%` over
+  2018-2026, versus Sharpe `0.96` and drawdown `-38.6%` for AAPL
+  buy-and-hold on the same windows. The bootstrap 5-95% Sharpe interval is
+  `+0.32` to `+1.46`; the probability of a negative true Sharpe is `0.2%` -
+  the first fully positive interval in this project.
+- The same procedure applied to the v0.3 trend model alone gives Sharpe
+  `0.76` (P(negative) `2.6%`), so the ensemble improves on the single-family
+  model.
+- A frozen ensemble composition selected once on 2015-2020 does not
+  generalize (test Sharpe `0.08`), and individual family champions are
+  mostly unprofitable on the test split. The value is in the annual
+  re-selection procedure, not in any fixed formula.
+- Raw CAGR (`11.7%`) still trails buy-and-hold (`27.7%`): this is
+  risk-managed participation with one third of the drawdown, not alpha.
+
+## Unreleased (0.6.0 M1 - Research Foundation)
+
+Engineering and methodology groundwork for the 0.6.0 model-improvement cycle.
+No trading logic changed; all 0.5.0 results remain reproducible.
+
+### Added
+
+- Strategy family registry (`quant_backtest.registry`): families are
+  registered with their parameter and strategy types, and evaluation
+  dispatches through the registry, so new signal families can be added
+  without touching the sweep machinery.
+- Parallel sweep execution (`quant_backtest.parallel`): grids run on a
+  process pool (`compute.workers: auto|N` in YAML), with results bit-for-bit
+  identical to serial runs. Engages only for grids of 32+ jobs.
+- Nested walk-forward selection (`nested_walk_forward.enabled`): the full
+  v0.3 selection pipeline re-runs inside every walk-forward window and the
+  selected model is evaluated on that window's out-of-sample slice. The
+  stitched OOS series is selection-clean by construction, is bootstrapped in
+  `significance_results.csv` (`nested_oos_stitched` row), and becomes the
+  primary scoreboard for 0.6 model upgrades. Outputs:
+  `nested_walk_forward.csv`, `nested_walk_forward_summary.csv`.
+- Probability of Backtest Overfitting (`pbo.enabled`): vectorized CSCV
+  (Bailey et al.) over the hysteresis grid's daily-return matrix, with
+  candidate capping and configurable block count. Output: `pbo_results.csv`.
+- `configs/research_v6.yaml`: v5 settings plus parallel workers, nested
+  walk-forward, and PBO enabled.
+
+### Changed
+
+- Split the `experiments.py` monolith (~1700 lines) into focused modules:
+  `research_config`, `research_data`, `evaluation`, `selection`, `sweeps`,
+  `significance`, `parallel`, `registry`. `experiments.py` remains the
+  orchestrator and re-exports the public API, so existing imports keep
+  working.
+- Package version bumped to `0.6.0.dev0`.
+
 ## 0.5.0 - Honest Methodology
 
 This release changes how results are produced, not what the model trades. The
