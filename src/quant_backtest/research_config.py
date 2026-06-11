@@ -83,6 +83,8 @@ class ResearchConfig:
     ensemble_max_members: int = 6
     ensemble_include_trend_baseline: bool = True
     ensemble_turnover_limit: float = 6.0
+    enable_overlays: bool = False
+    overlay_grids: dict | None = None
 
 
 def load_research_config(path: Path) -> ResearchConfig:
@@ -107,6 +109,7 @@ def load_research_config(path: Path) -> ResearchConfig:
     pbo = raw.get("pbo", {})
     signal_families = raw.get("signal_families", {})
     ensemble = raw.get("ensemble", {})
+    overlays = raw.get("overlays", {})
     cash_proxy = cash.get("proxy")
     if cash_proxy is not None and str(cash_proxy).lower() in ("", "none", "cash", "null"):
         cash_proxy = None
@@ -177,6 +180,11 @@ def load_research_config(path: Path) -> ResearchConfig:
         ensemble_max_members=int(ensemble.get("max_members", 6)),
         ensemble_include_trend_baseline=bool(ensemble.get("include_trend_baseline", True)),
         ensemble_turnover_limit=float(ensemble.get("turnover_limit", 6.0)),
+        enable_overlays=bool(overlays.get("enabled", False)),
+        overlay_grids={
+            key: value for key, value in overlays.items() if key != "enabled" and isinstance(value, dict)
+        }
+        or None,
     )
 
 

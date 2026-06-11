@@ -52,8 +52,9 @@ procedure, not in any fixed formula. Raw CAGR still trails buy-and-hold
 - `configs/research_v6.yaml` - 0.6-dev configuration: v5 plus parallel sweep
   execution, nested walk-forward selection, PBO (probability of backtest
   overfitting) diagnostics, five extra signal families (time-series momentum,
-  Donchian breakout, ATR trend strength, dual momentum, 52-week-high), and
-  equal-vote ensemble selection.
+  Donchian breakout, ATR trend strength, dual momentum, 52-week-high),
+  equal-vote ensemble selection, and exit/sizing/regime overlays (ATR
+  trailing stop, volatility targeting, regime exposure scaling).
 - `configs/research_v5.yaml` - default configuration: cash yield, train-only
   selection, and significance testing enabled.
 - `configs/research_v4.yaml` - capture-aware configuration, kept compatible.
@@ -61,13 +62,14 @@ procedure, not in any fixed formula. Raw CAGR still trails buy-and-hold
 - `configs/research_v2.yaml` - previous robustness configuration, kept compatible.
 - `src/quant_backtest/` - the research package:
   - `data.py`, `research_data.py` - downloads, snapshots, fixtures, cash proxy;
-  - `strategies.py`, `signal_families.py` - SMA/trend/capture families plus
-    time-series momentum, Donchian, ATR trend, dual momentum, 52-week-high,
-    and the equal-vote ensemble;
+  - `strategies.py`, `signal_families.py`, `overlays.py` - SMA/trend/capture
+    families plus time-series momentum, Donchian, ATR trend, dual momentum,
+    52-week-high, the equal-vote ensemble, and exit/sizing/regime overlays;
   - `registry.py` - strategy family registry (new families plug in here);
   - `engine.py`, `costs.py`, `backtest.py`, `metrics.py` - the backtest core;
-  - `evaluation.py`, `sweeps.py`, `selection.py`, `ensemble_research.py` -
-    grids, leaderboards, and train-only selection rules;
+  - `evaluation.py`, `sweeps.py`, `selection.py`, `ensemble_research.py`,
+    `overlay_research.py` - grids, leaderboards, and train-only selection
+    rules;
   - `stats.py`, `significance.py` - bootstrap, Deflated Sharpe, permutation
     test, PBO (CSCV);
   - `parallel.py` - process-pool sweep execution;
@@ -186,7 +188,11 @@ Added in 0.6.0-dev:
   family (picked on train), then subsets of champions as equal-vote
   ensembles - composition-level selection instead of dense parameter grids;
 - the CSCV probability of backtest overfitting (`pbo_results.csv`) measures
-  how often the in-sample winner of a grid underperforms out of sample.
+  how often the in-sample winner of a grid underperforms out of sample;
+- exit/sizing/regime overlays (ATR trailing stop, volatility targeting,
+  regime exposure scaling) are searched around the selected model on the
+  train period; the grid always contains the identity combination, so an
+  overlay must beat the plain model to be selected.
 
 The first honest run (June 2026) found that with train-only selection the
 model picks `SMA 5/50` hysteresis and earns test CAGR `5.89%` with Sharpe

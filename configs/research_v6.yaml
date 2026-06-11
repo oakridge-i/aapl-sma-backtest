@@ -62,6 +62,22 @@ ensemble:
   max_members: 6
   include_trend_baseline: true
   turnover_limit: 6.0
+overlays:
+  # Exit/sizing/regime overlays searched around the selected ensemble. The
+  # grid always includes the identity combination, so an overlay must beat
+  # the plain model on the train period to be selected.
+  enabled: true
+  trailing_stop:
+    atr_windows: [20]
+    multiples: [3.0, 4.0, 5.0]
+  regime_scaling:
+    enabled: true
+    sma_window: 200
+    bear_cut: 0.5
+    bull_boost: 1.25
+  vol_target:
+    window: 20
+    targets: [0.20]
 cost_bps:
   - 0
   - 5

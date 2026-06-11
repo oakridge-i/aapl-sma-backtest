@@ -47,6 +47,7 @@ CSV_OUTPUTS = {
     "pbo_results.csv": "pbo_results",
     "family_leaderboard.csv": "family_leaderboard",
     "ensemble_leaderboard.csv": "ensemble_leaderboard",
+    "overlay_leaderboard.csv": "overlay_leaderboard",
     "v06_comparison.csv": "v06_comparison",
     "v06_cost_sensitivity.csv": "v06_cost_sensitivity",
     "nested_ensemble_walk_forward.csv": "nested_ensemble_walk_forward",
@@ -85,6 +86,7 @@ def save_research_outputs(result: ResearchResult, output_dir: Path) -> None:
     result.pbo_results.to_csv(output_dir / "pbo_results.csv", index=False)
     result.family_leaderboard.to_csv(output_dir / "family_leaderboard.csv", index=False)
     result.ensemble_leaderboard.to_csv(output_dir / "ensemble_leaderboard.csv", index=False)
+    result.overlay_leaderboard.to_csv(output_dir / "overlay_leaderboard.csv", index=False)
     result.v06_comparison.to_csv(output_dir / "v06_comparison.csv", index=False)
     result.v06_cost_sensitivity.to_csv(output_dir / "v06_cost_sensitivity.csv", index=False)
     result.v06_curve.to_csv(output_dir / "v06_selected_curve.csv", index_label="Date")
@@ -167,6 +169,7 @@ def save_research_workbook(result: ResearchResult, output_path: Path) -> None:
         "PBO": result.pbo_results,
         "Family Leaderboard": result.family_leaderboard,
         "Ensemble Leaderboard": result.ensemble_leaderboard,
+        "Overlay Leaderboard": result.overlay_leaderboard,
         "v0.6 Comparison": result.v06_comparison,
         "v0.6 Costs": result.v06_cost_sensitivity,
         "Nested Ensemble WF": result.nested_ensemble_walk_forward,
@@ -620,6 +623,7 @@ def _raw_results(result: ResearchResult) -> pd.DataFrame:
             result.significance_results.assign(source="significance_results"),
             result.family_leaderboard.assign(source="family_leaderboard"),
             result.ensemble_leaderboard.assign(source="ensemble_leaderboard"),
+            result.overlay_leaderboard.assign(source="overlay_leaderboard"),
             result.v06_comparison.assign(source="v06_comparison"),
             result.nested_ensemble_walk_forward.assign(source="nested_ensemble_walk_forward"),
         ],

@@ -2,6 +2,31 @@
 
 All notable project changes are documented here.
 
+## Unreleased (0.6.0 M3 - Exit, Sizing, and Regime Overlays)
+
+### Added
+
+- Composable overlays (`quant_backtest.overlays`) that post-process any base
+  strategy's target position, applied in a fixed order:
+  - regime scaling: cut exposure (default to 50%) when the market trades
+    below its long SMA, boost it (capped at 1) when above;
+  - volatility targeting: scale exposure down when realized volatility runs
+    above target;
+  - ATR trailing stop: force the position flat after price falls a multiple
+    of ATR from the post-entry peak; re-arm on a new high or when the base
+    signal itself resets. The stop runs last so it sees the final sized
+    exposure.
+- Overlay search (`quant_backtest.overlay_research`) around the selected v6
+  model: a small grid (trailing-stop multiples x regime scaling on/off x
+  vol targeting on/off) that always contains the identity combination, so an
+  overlay must beat the plain model on the train period (with the 20 bps
+  stress) to displace it. Output: `overlay_leaderboard.csv`.
+- Overlay re-selection inside every nested-ensemble walk-forward window, so
+  the stitched OOS scoreboard covers the full M3 procedure.
+- The Deflated Sharpe hurdle for `selected_v6` now counts ensemble and
+  overlay candidates together.
+- `overlays` section in `configs/research_v6.yaml`.
+
 ## Unreleased (0.6.0 M2 - Signal Families and Ensemble)
 
 The first genuine model-search expansion since the SMA crossover, built on

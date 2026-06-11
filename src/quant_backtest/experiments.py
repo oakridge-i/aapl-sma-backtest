@@ -68,6 +68,11 @@ from .ensemble_research import (  # noqa: F401  (re-exported)
     select_ensemble_model,
     select_family_champions,
 )
+from .overlay_research import (  # noqa: F401  (re-exported)
+    overlay_parameter_grid,
+    run_overlay_leaderboard,
+    select_overlay_model,
+)
 from .significance import run_pbo_analysis, run_significance_analysis  # noqa: F401  (re-exported)
 from .strategies import SmaParameters
 from .sweeps import (  # noqa: F401  (re-exported)
@@ -134,6 +139,7 @@ class ResearchResult:
     pbo_results: pd.DataFrame = field(default_factory=pd.DataFrame)
     family_leaderboard: pd.DataFrame = field(default_factory=pd.DataFrame)
     ensemble_leaderboard: pd.DataFrame = field(default_factory=pd.DataFrame)
+    overlay_leaderboard: pd.DataFrame = field(default_factory=pd.DataFrame)
     v06_comparison: pd.DataFrame = field(default_factory=pd.DataFrame)
     v06_cost_sensitivity: pd.DataFrame = field(default_factory=pd.DataFrame)
     v06_curve: pd.DataFrame = field(default_factory=pd.DataFrame)
@@ -214,12 +220,17 @@ def run_research(
     v06_curve = pd.DataFrame()
     selected_v6_model: dict[str, Any] | None = None
     family_champions: dict[str, Any] = {}
+    overlay_leaderboard = pd.DataFrame()
     if config.enable_signal_families:
         family_leaderboard, family_params = run_family_sweep(train_prices, config)
         family_champions = select_family_champions(family_leaderboard, family_params, config)
         ensemble_candidates = build_ensemble_candidates(family_champions, config)
         ensemble_leaderboard = run_ensemble_leaderboard(train_prices, config, ensemble_candidates)
         selected_v6_model = select_ensemble_model(ensemble_leaderboard, ensemble_candidates, selected_model)
+        if config.enable_overlays:
+            overlay_candidates = overlay_parameter_grid(config, selected_v6_model["params"])
+            overlay_leaderboard = run_overlay_leaderboard(train_prices, config, overlay_candidates)
+            selected_v6_model = select_overlay_model(overlay_leaderboard, overlay_candidates, selected_v6_model)
         v06_comparison, v06_curve = run_v06_comparison(
             prices, config, selected_model, family_champions, selected_v6_model
         )
@@ -249,8 +260,13 @@ def run_research(
         extra_models = []
         extra_stitched = []
         if selected_v6_model is not None:
+            # The multiple-testing hurdle counts every candidate that competed
+            # for the v6 slot: ensemble compositions plus overlay combinations.
+            v6_trials = ensemble_leaderboard
+            if not overlay_leaderboard.empty:
+                v6_trials = pd.concat([ensemble_leaderboard, overlay_leaderboard], ignore_index=True, sort=False)
             extra_models.append(
-                ("selected_v6", selected_v6_model["params"], selected_v6_model["variant"], ensemble_leaderboard)
+                ("selected_v6", selected_v6_model["params"], selected_v6_model["variant"], v6_trials)
             )
         if not nested_ensemble["oos_returns"].empty:
             extra_stitched.append(("nested_ensemble_oos_stitched", nested_ensemble["oos_returns"]))
@@ -304,6 +320,7 @@ def run_research(
         pbo_results=pbo_results,
         family_leaderboard=family_leaderboard,
         ensemble_leaderboard=ensemble_leaderboard,
+        overlay_leaderboard=overlay_leaderboard,
         v06_comparison=v06_comparison,
         v06_cost_sensitivity=v06_cost_sensitivity,
         v06_curve=v06_curve,

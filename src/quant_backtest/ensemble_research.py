@@ -322,6 +322,13 @@ def run_nested_ensemble_walk_forward(
         leaderboard = run_ensemble_leaderboard(train_prices, config, candidates)
         selected = select_ensemble_model(leaderboard, candidates, fallback_model)
 
+        if config.enable_overlays:
+            from .overlay_research import overlay_parameter_grid, run_overlay_leaderboard, select_overlay_model
+
+            overlay_candidates = overlay_parameter_grid(config, selected["params"])
+            overlay_leaderboard = run_overlay_leaderboard(train_prices, config, overlay_candidates)
+            selected = select_overlay_model(overlay_leaderboard, overlay_candidates, selected)
+
         result = evaluate_strategy(
             prices=test_prices,
             ticker=config.base_ticker,
