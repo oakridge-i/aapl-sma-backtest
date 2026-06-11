@@ -46,6 +46,24 @@ the M1 honest-selection machinery.
   (including ones that need the market price series), so new families work
   through every sweep without bespoke branches.
 
+### Findings (preview run, data through 2026-06-09)
+
+- The nested-walk-forward ensemble (composition re-selected every window)
+  earned a stitched OOS Sharpe of `0.91` with max drawdown `-13.9%` over
+  2018-2026, versus Sharpe `0.96` and drawdown `-38.6%` for AAPL
+  buy-and-hold on the same windows. The bootstrap 5-95% Sharpe interval is
+  `+0.32` to `+1.46`; the probability of a negative true Sharpe is `0.2%` -
+  the first fully positive interval in this project.
+- The same procedure applied to the v0.3 trend model alone gives Sharpe
+  `0.76` (P(negative) `2.6%`), so the ensemble improves on the single-family
+  model.
+- A frozen ensemble composition selected once on 2015-2020 does not
+  generalize (test Sharpe `0.08`), and individual family champions are
+  mostly unprofitable on the test split. The value is in the annual
+  re-selection procedure, not in any fixed formula.
+- Raw CAGR (`11.7%`) still trails buy-and-hold (`27.7%`): this is
+  risk-managed participation with one third of the drawdown, not alpha.
+
 ## Unreleased (0.6.0 M1 - Research Foundation)
 
 Engineering and methodology groundwork for the 0.6.0 model-improvement cycle.

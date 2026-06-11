@@ -5,19 +5,25 @@ daily market data, tests a long-only SMA 20 / SMA 100 crossover strategy, applie
 10 bps transaction costs on position changes, and compares the strategy with a
 buy-and-hold benchmark.
 
-The current research version (0.5.0) focuses on honest methodology: all model
-selection happens on the train period only, cash earns a T-bill proxy yield,
-Sharpe uses a real risk-free rate, and every reported result comes with
-significance diagnostics (block bootstrap intervals, Deflated Sharpe Ratio,
-and a timing permutation test). Each run also writes a data snapshot and a
-manifest so results can be reproduced exactly.
+Since 0.5.0 the project runs on an honest methodology: all model selection
+happens on the train period only, cash earns a T-bill proxy yield, Sharpe uses
+a real risk-free rate, and every reported result comes with significance
+diagnostics (block bootstrap intervals, Deflated Sharpe Ratio, and a timing
+permutation test). Each run also writes a data snapshot and a manifest so
+results can be reproduced exactly.
+
+The 0.6.0 development line (current) expands the model search beyond the SMA
+crossover: five additional long-only signal families, an equal-vote ensemble
+whose selection happens at the composition level, nested walk-forward
+selection as the primary scoreboard, parallel sweep execution, and a CSCV
+probability-of-backtest-overfitting diagnostic.
 
 This project is for research and education only. It is not investment advice.
 
 ## Current Status
 
 The project started as a single AAPL SMA crossover backtest. It now includes a
-research workflow that stress-tests the strategy across transaction costs,
+research workflow that stress-tests strategies across transaction costs,
 parameter choices, train/test periods, walk-forward windows, and a small
 multi-asset universe.
 
@@ -27,6 +33,17 @@ reported out-of-sample numbers upward. Selection is now train-only, the test
 period is touched once per final model, and the final models are additionally
 evaluated across every walk-forward window. Pre-0.5 reported metrics should be
 treated as optimistic; the 0.5 reports supersede them.
+
+The 0.6.0-dev preview run (June 2026) produced the project's first
+statistically supported positive result: an equal-vote ensemble of signal
+families, with its composition re-selected inside every walk-forward window,
+earned a stitched out-of-sample Sharpe of `0.91` (bootstrap 5-95% interval
+`+0.32` to `+1.46`, probability of a negative true Sharpe `0.2%`) with a
+`-13.9%` max drawdown versus `0.96` Sharpe and `-38.6%` drawdown for AAPL
+buy-and-hold over the same windows. A *frozen* ensemble composition does not
+generalize (test Sharpe `0.08`); the value lies in the annual re-selection
+procedure, not in any fixed formula. Raw CAGR still trails buy-and-hold
+(`11.7%` vs `27.7%`), so this is risk-managed participation, not alpha.
 
 ## Project Contents
 
@@ -42,7 +59,19 @@ treated as optimistic; the 0.5 reports supersede them.
 - `configs/research_v4.yaml` - capture-aware configuration, kept compatible.
 - `configs/research_v3.yaml` - turnover-aware configuration, kept compatible.
 - `configs/research_v2.yaml` - previous robustness configuration, kept compatible.
-- `src/quant_backtest/` - data loading, strategy, metrics, stats, and charting code.
+- `src/quant_backtest/` - the research package:
+  - `data.py`, `research_data.py` - downloads, snapshots, fixtures, cash proxy;
+  - `strategies.py`, `signal_families.py` - SMA/trend/capture families plus
+    time-series momentum, Donchian, ATR trend, dual momentum, 52-week-high,
+    and the equal-vote ensemble;
+  - `registry.py` - strategy family registry (new families plug in here);
+  - `engine.py`, `costs.py`, `backtest.py`, `metrics.py` - the backtest core;
+  - `evaluation.py`, `sweeps.py`, `selection.py`, `ensemble_research.py` -
+    grids, leaderboards, and train-only selection rules;
+  - `stats.py`, `significance.py` - bootstrap, Deflated Sharpe, permutation
+    test, PBO (CSCV);
+  - `parallel.py` - process-pool sweep execution;
+  - `experiments.py` - orchestration; `reports.py` - CSV/PNG/Excel outputs.
 - `scripts/create_visual_report.py` - creates the model forecast PNG and Excel-ready CSV.
 - `scripts/create_excel_report.py` - creates the Excel dashboard from generated CSV files.
 - `outputs/` - generated reports and sample output from the AAPL run.
@@ -118,6 +147,11 @@ The research command writes CSV tables, charts, and an Excel workbook:
 - `outputs/final_model_walk_forward.csv`
 - `outputs/significance_results.csv`
 - `outputs/data_snapshot.csv` and `outputs/run_manifest.json` (reproducibility)
+- with the v6 config additionally: `family_leaderboard.csv`,
+  `ensemble_leaderboard.csv`, `v06_comparison.csv`, `v06_cost_sensitivity.csv`,
+  `v06_selected_curve.csv`, `nested_walk_forward.csv`,
+  `nested_walk_forward_summary.csv`, `nested_ensemble_walk_forward.csv`,
+  `nested_ensemble_summary.csv`, `pbo_results.csv`
 - `outputs/research_report.xlsx`
 - PNG charts for baseline, costs, heatmaps, train/test, multi-asset,
   leaderboard, v0.3 equity/drawdown, turnover, capture ratios, allocation
@@ -142,6 +176,17 @@ Methodology since 0.5.0:
 - `significance_results.csv` reports bootstrap confidence intervals, the
   Deflated Sharpe Ratio against the number of candidates tried, and a
   permutation p-value for timing skill.
+
+Added in 0.6.0-dev:
+
+- nested walk-forward selection: the entire selection pipeline re-runs inside
+  every walk-forward window, and the stitched out-of-sample series (clean of
+  selection bias by construction) is the primary scoreboard;
+- the ensemble search space is deliberately tiny: one champion per signal
+  family (picked on train), then subsets of champions as equal-vote
+  ensembles - composition-level selection instead of dense parameter grids;
+- the CSCV probability of backtest overfitting (`pbo_results.csv`) measures
+  how often the in-sample winner of a grid underperforms out of sample.
 
 The first honest run (June 2026) found that with train-only selection the
 model picks `SMA 5/50` hysteresis and earns test CAGR `5.89%` with Sharpe
