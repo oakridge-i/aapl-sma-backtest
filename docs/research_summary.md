@@ -266,6 +266,21 @@ Interpretation:
 - These are preview numbers; the 0.6.0 release will re-run everything and
   apply the acceptance gate (bootstrap interval, DSR, PBO, turnover limits).
 
+### M3: exit, sizing, and regime overlays (preview)
+
+The M3 pass added composable overlays around the selected model - an ATR
+trailing stop, volatility targeting, and regime exposure scaling - searched
+on the train period against an identity baseline (the overlay must beat the
+plain model to be selected) and re-selected inside every nested window.
+
+On the same data snapshot as the M2 preview, the stitched nested OOS Sharpe
+improved from `0.91` to `0.94` (bootstrap interval `+0.38` to `+1.46`, zero
+of 1000 bootstrap samples negative) with drawdown unchanged at `-14.2%`. On
+the frozen split, the train-selected overlay cut the test drawdown from
+`-23.4%` to `-14.6%` while raising both CAGR and Sharpe. The overlays do what
+they were designed to do: they trim deep losses without giving up the
+ensemble's upside.
+
 ## Next Research Steps
 
 1. Re-run the full workflow on fresh data and re-baseline the conclusions on

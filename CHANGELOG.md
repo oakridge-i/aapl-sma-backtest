@@ -26,6 +26,23 @@ All notable project changes are documented here.
 - The Deflated Sharpe hurdle for `selected_v6` now counts ensemble and
   overlay candidates together.
 - `overlays` section in `configs/research_v6.yaml`.
+- Empty Yahoo Finance responses are now retried with a pause before failing
+  (`download_ohlcv` saw intermittent rate-limit failures).
+
+### Findings (preview run, same data snapshot as the M2 preview)
+
+- On the primary scoreboard (nested walk-forward, overlays re-selected per
+  window) the stitched OOS Sharpe improved from `0.91` to `0.94` with CAGR
+  `11.9%` and max drawdown essentially unchanged at `-14.2%`; the bootstrap
+  Sharpe interval tightened to `+0.38` to `+1.46` and the probability of a
+  negative true Sharpe dropped to `0.0%` (0 of 1000 bootstrap samples).
+- On the frozen 2015/2021 split the train-selected overlay
+  (`selected_v6_overlay`) cut the test max drawdown from `-23.4%` to
+  `-14.6%` while raising CAGR (`3.2%` to `4.8%`) and Sharpe (`0.08` to
+  `0.19`).
+- The risk-managed profile is now: near-benchmark risk-adjusted returns
+  (stitched Sharpe `0.94` vs `0.96`) at roughly one third of the drawdown.
+  Raw CAGR still trails buy-and-hold.
 
 ## Unreleased (0.6.0 M2 - Signal Families and Ensemble)
 
