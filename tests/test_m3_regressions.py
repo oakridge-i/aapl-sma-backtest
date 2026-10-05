@@ -148,7 +148,7 @@ def test_history_warms_short_test_window_without_training_pnl():
     assert curve["strategy_equity"].iloc[0] == 10_000.0
     assert curve["position"].iloc[0] == 0.0
     assert curve["position"].iloc[1] == 0.5
-    assert curve["transaction_cost"].iloc[1] == pytest.approx(0.0005)
+    assert curve["transaction_cost"].iloc[1] == pytest.approx(0.0005 / 1.0005)
     expected = 10_000 * (1 + curve["strategy_return"]).cumprod()
     np.testing.assert_allclose(curve["strategy_equity"], expected)
     assert curve["buy_hold_equity"].iloc[0] == 10_000.0

@@ -1,5 +1,17 @@
 # Changelog
 
+
+## Unreleased — A1 methodology
+
+- Finance one-way trading fees from NAV and rebalance against drifted holdings.
+- Execute close-generated signals at the following close, earning returns afterward.
+- Run nested OOS schedules as one account; reject overlapping/gapped windows.
+- Replace globally fitted nested-ensemble fallback with fixed SMA 20/100.
+- Warm all test comparisons consistently; align daily return references and report metrics.
+- Fail on missing/invalid prices and unavailable configured context; require adjusted downloads.
+- Reprice timing permutations using the common engine and disclose statistical scope.
+- Add accounting regression tests and mark historical performance as awaiting A3 rerun.
+
 All notable project changes are documented here.
 
 ## Unreleased - Minor fixes

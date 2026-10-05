@@ -1,13 +1,19 @@
 # AAPL SMA Robustness Research
 
+> A1 methodology update: execution, financed costs, continuous walk-forward
+> accounting and daily-reference metrics have changed. All numerical results
+> below are archived pre-A1 results and require a controlled rerun (A3).
+> See [the current accounting and statistical contract](docs/a1_methodology.md).
+
+
 Educational quantitative analysis project for Apple Inc. (`AAPL`). It downloads
 daily market data, tests a long-only SMA 20 / SMA 100 crossover strategy, applies
 10 bps transaction costs on position changes, and compares the strategy with a
 buy-and-hold benchmark.
 
-Since 0.5.0 the project runs on an honest methodology: all model selection
+Since 0.5.0 the selection code uses train-only ranking: all model selection
 happens on the train period only, cash earns a T-bill proxy yield, Sharpe uses
-a real risk-free rate, and every reported result comes with significance
+an explicitly identified cash-return reference, and every reported result comes with significance
 diagnostics (block bootstrap intervals, Deflated Sharpe Ratio, and a timing
 permutation test). Each run also writes a data snapshot and a manifest so
 results can be reproduced exactly.
@@ -178,7 +184,7 @@ Methodology since 0.5.0:
 - candidate ranking and model selection use the train period only; the test
   period is evaluated once per final model;
 - cash earns the `BIL` proxy return, and Sharpe/Sortino subtract the
-  corresponding risk-free rate;
+  aligned daily proxy return (not a claim of risk-free returns);
 - every selected model is re-checked across walk-forward windows with frozen
   parameters (`final_model_walk_forward.csv`);
 - `significance_results.csv` reports bootstrap confidence intervals, the
@@ -188,8 +194,8 @@ Methodology since 0.5.0:
 Added in 0.6.0-dev:
 
 - nested walk-forward selection: the entire selection pipeline re-runs inside
-  every walk-forward window, and the stitched out-of-sample series (clean of
-  selection bias by construction) is the primary scoreboard;
+  every walk-forward window, and one continuous out-of-sample account is the primary scoreboard;
+  repeated human research choices are not made independent by this procedure;
 - the ensemble search space is deliberately tiny: one champion per signal
   family (picked on train), then subsets of champions as equal-vote
   ensembles - composition-level selection instead of dense parameter grids;
@@ -204,13 +210,13 @@ Added in 0.6.0-dev:
   base fallback holdings, cap total exposure at 1, and leave released capital
   in cash.
 
-The first honest run (June 2026) found that with train-only selection the
+An archived pre-A1 run (June 2026) found that with train-only selection the
 model picks `SMA 5/50` hysteresis and earns test CAGR `5.89%` with Sharpe
 `0.24` versus AAPL buy-and-hold CAGR `17.50%` with Sharpe `0.61`. The
-permutation test gives p = `0.71` and the bootstrap puts a `33.9%` chance on a
-negative true Sharpe: the previously reported v0.3 numbers were an artifact of
+permutation test gives p = `0.71` and `33.9%` of that run's bootstrap replicates had a
+negative Sharpe (not a probability that the true Sharpe is negative): the previously reported v0.3 numbers were an artifact of
 the selection leak, and the current rules show no demonstrated timing alpha.
-The proven benefit is limited to drawdown cushioning in bear regimes (2022:
+That historical run showed drawdown cushioning in some bear regimes (2022:
 `-8.6%` vs `-28.5%` for AAPL).
 
 Earlier findings (v0.2-v0.4) are kept in `docs/research_summary.md`, with the
@@ -254,7 +260,7 @@ this AAPL period.
 ## Notes
 
 - The strategy uses adjusted close when available.
-- Signals are shifted by one day to avoid lookahead bias.
+- Signals formed after close t trade at close t+1 and earn asset returns from t+1 to t+2.
 - The `--end` argument is exclusive because Yahoo Finance treats it that way.
 - The current research intentionally avoids shorts; it focuses on validating and improving long-only signals first.
 - The package can be installed in editable mode with

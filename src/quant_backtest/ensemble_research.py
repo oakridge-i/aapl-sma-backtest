@@ -12,6 +12,8 @@ from __future__ import annotations
 import itertools
 from typing import Any
 
+from .continuous import continuous_oos
+
 import pandas as pd
 
 from .evaluation import evaluate_strategy
@@ -32,8 +34,8 @@ from .sweeps import walk_forward_windows
 
 
 # The fixed trend member available to ensembles. This is the published v0.3
-# parameterization, frozen a priori; it is never re-fitted, so including it
-# adds no selection degrees of freedom.
+# parameterization. It is not refitted in this grid, but its prior research
+# history still contributes to human selection bias; it is not a new holdout.
 CANONICAL_TREND_MEMBER = TrendAllocationParameters(
     short_window=5,
     long_window=200,
@@ -299,16 +301,18 @@ def run_v06_cost_sensitivity(
 def run_nested_ensemble_walk_forward(
     prices: pd.DataFrame,
     config: ResearchConfig,
-    fallback_model: dict[str, Any],
+    fallback_model: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Walk-forward ensemble selection: champions and composition re-picked per window.
 
     The stitched OOS series is the primary scoreboard for the ensemble model:
     every window's selection sees only that window's train slice.
     """
+    # Never use a globally selected model in an earlier OOS window.
+    # Legacy argument retained for callers; the fallback is fixed ex ante.
+    fallback_model = {"params": SmaParameters(20, 100), "variant": "long_cash"}
     window_rows: list[dict[str, Any]] = []
-    oos_pieces: list[pd.Series] = []
-    benchmark_pieces: list[pd.Series] = []
+    target_pieces: list[pd.DataFrame] = []
 
     for window_id, train_start, train_end, test_start, test_end in walk_forward_windows(prices, config):
         train_prices = prices.loc[train_start:train_end]
@@ -333,7 +337,7 @@ def run_nested_ensemble_walk_forward(
             selected = select_overlay_model(overlay_leaderboard, overlay_candidates, selected)
 
         result = evaluate_strategy(
-            prices=prices.loc[train_start:test_end],
+            prices=prices.loc[:test_end],
             evaluation_start=test_start,
             ticker=config.base_ticker,
             params=selected["params"],
@@ -370,36 +374,10 @@ def run_nested_ensemble_walk_forward(
                 "excess_cagr_vs_benchmark": row["excess_cagr_vs_benchmark"],
             }
         )
-        oos_pieces.append(result["curve"]["strategy_return"])
-        benchmark_pieces.append(result["curve"]["buy_hold_return"])
+        target_pieces.append(result["target_weights"])
 
     windows_table = pd.DataFrame(window_rows)
     if windows_table.empty:
         return {"windows": windows_table, "summary": pd.DataFrame(), "oos_returns": pd.Series(dtype=float)}
 
-    oos_returns = pd.concat(oos_pieces).sort_index()
-    oos_returns = oos_returns[~oos_returns.index.duplicated(keep="first")]
-    benchmark_returns = pd.concat(benchmark_pieces).sort_index()
-    benchmark_returns = benchmark_returns[~benchmark_returns.index.duplicated(keep="first")]
-
-    from .metrics import summarize_performance
-
-    oos_equity = config.initial_capital * (1.0 + oos_returns).cumprod()
-    benchmark_equity = config.initial_capital * (1.0 + benchmark_returns).cumprod()
-    summary_rows = [
-        summarize_performance(
-            "nested_ensemble_oos_stitched", oos_equity, oos_returns, benchmark_equity=benchmark_equity
-        )
-        | {
-            "windows": int(len(windows_table)),
-            "windows_beating_benchmark": int(
-                (windows_table["sharpe"] > windows_table["benchmark_sharpe"]).sum()
-            ),
-            "median_window_sharpe": float(windows_table["sharpe"].median()),
-            "median_window_cagr": float(windows_table["cagr"].median()),
-        },
-        summarize_performance("benchmark_stitched", benchmark_equity, benchmark_returns)
-        | {"windows": int(len(windows_table))},
-    ]
-    summary = pd.DataFrame(summary_rows)
-    return {"windows": windows_table, "summary": summary, "oos_returns": oos_returns}
+    return continuous_oos(prices, config, windows_table, target_pieces, "nested_ensemble_oos_stitched")

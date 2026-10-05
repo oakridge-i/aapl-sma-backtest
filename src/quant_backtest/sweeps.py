@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from .continuous import continuous_oos
+
 import pandas as pd
 
 from .evaluation import (
@@ -92,9 +94,10 @@ def run_train_test(prices: pd.DataFrame, config: ResearchConfig) -> pd.DataFrame
     train_sweep = run_parameter_sweep(train_prices, config, period_name="train")
     selected = select_best_parameters(train_sweep, config)
     rows = []
-    for period_name, period_prices in [("train", train_prices), ("test", test_prices)]:
+    for period_name, period_prices in [("train", train_prices), ("test", prices.loc[:config.test_end or prices.index.max()])]:
         result = evaluate_strategy(
             prices=period_prices,
+            evaluation_start=config.test_start if period_name == "test" else None,
             ticker=config.base_ticker,
             params=selected,
             variant="long_cash",
@@ -141,7 +144,8 @@ def run_walk_forward(prices: pd.DataFrame, config: ResearchConfig) -> pd.DataFra
         if len(train_prices) > 250 and len(test_prices) > 20:
             selected = select_best_parameters(run_parameter_sweep(train_prices, config, period_name="wf_train"), config)
             result = evaluate_strategy(
-                prices=test_prices,
+                prices=prices.loc[:test_end],
+                evaluation_start=test_start,
                 ticker=config.base_ticker,
                 params=selected,
                 variant="long_cash",
@@ -199,6 +203,7 @@ def run_final_model_walk_forward(
                     "variant": variant,
                     "window_id": window_id,
                     "test_start": test_start.date().isoformat(),
+                    "evaluation_role": "retrospective_fixed_model_diagnostic",
                     "test_end": test_end.date().isoformat(),
                     "cagr": row["cagr"],
                     "sharpe": row["sharpe"],
@@ -223,15 +228,15 @@ def run_nested_walk_forward(prices: pd.DataFrame, config: ResearchConfig) -> dic
     on the window's train slice -> top candidates -> allocation leaderboard on
     the same train slice -> selection rule) runs from scratch, and the selected
     model is evaluated once on the window's test slice. The stitched
-    out-of-sample return series is selection-clean by construction and is the
+    out-of-sample return series uses a continuous account; historical human
+    research choices are not made independent by this procedure. This is the
     primary scoreboard for model upgrades.
 
     Returns a dict with ``windows`` (per-window table), ``summary`` (aggregate
     rows), and ``oos_returns`` (stitched daily OOS returns).
     """
     window_rows: list[dict[str, Any]] = []
-    oos_pieces: list[pd.Series] = []
-    benchmark_pieces: list[pd.Series] = []
+    target_pieces: list[pd.DataFrame] = []
 
     for window_id, train_start, train_end, test_start, test_end in walk_forward_windows(prices, config):
         train_prices = prices.loc[train_start:train_end]
@@ -253,7 +258,8 @@ def run_nested_walk_forward(prices: pd.DataFrame, config: ResearchConfig) -> dic
         selected = select_allocation_model(leaderboard, window_config)
 
         result = evaluate_strategy(
-            prices=test_prices,
+            prices=prices.loc[:test_end],
+            evaluation_start=test_start,
             ticker=config.base_ticker,
             params=selected["params"],
             variant=selected["variant"],
@@ -286,35 +292,13 @@ def run_nested_walk_forward(prices: pd.DataFrame, config: ResearchConfig) -> dic
                 "excess_cagr_vs_benchmark": row["excess_cagr_vs_benchmark"],
             }
         )
-        oos_pieces.append(result["curve"]["strategy_return"])
-        benchmark_pieces.append(result["curve"]["buy_hold_return"])
+        target_pieces.append(result["target_weights"])
 
     windows_table = pd.DataFrame(window_rows)
     if windows_table.empty:
         return {"windows": windows_table, "summary": pd.DataFrame(), "oos_returns": pd.Series(dtype=float)}
 
-    oos_returns = pd.concat(oos_pieces).sort_index()
-    oos_returns = oos_returns[~oos_returns.index.duplicated(keep="first")]
-    benchmark_returns = pd.concat(benchmark_pieces).sort_index()
-    benchmark_returns = benchmark_returns[~benchmark_returns.index.duplicated(keep="first")]
-
-    oos_equity = config.initial_capital * (1.0 + oos_returns).cumprod()
-    benchmark_equity = config.initial_capital * (1.0 + benchmark_returns).cumprod()
-    summary_rows = [
-        summarize_performance("nested_oos_stitched", oos_equity, oos_returns, benchmark_equity=benchmark_equity)
-        | {
-            "windows": int(len(windows_table)),
-            "windows_beating_benchmark": int(
-                (windows_table["sharpe"] > windows_table["benchmark_sharpe"]).sum()
-            ),
-            "median_window_sharpe": float(windows_table["sharpe"].median()),
-            "median_window_cagr": float(windows_table["cagr"].median()),
-        },
-        summarize_performance("benchmark_stitched", benchmark_equity, benchmark_returns)
-        | {"windows": int(len(windows_table))},
-    ]
-    summary = pd.DataFrame(summary_rows)
-    return {"windows": windows_table, "summary": summary, "oos_returns": oos_returns}
+    return continuous_oos(prices, config, windows_table, target_pieces, "nested_oos_stitched")
 
 
 def run_multi_asset(prices: pd.DataFrame, config: ResearchConfig, params: SmaParameters) -> pd.DataFrame:
@@ -459,7 +443,7 @@ def run_capture_analysis(
     config: ResearchConfig,
     selected_model: dict[str, Any],
 ) -> pd.DataFrame:
-    evaluation_prices = prices.loc[config.test_start : config.test_end or prices.index.max()]
+    evaluation_prices = prices.loc[: config.test_end or prices.index.max()]
     scenarios: list[tuple[str, Any, str]] = [
         ("v2_sma_5_50", SmaParameters(5, 50), "long_cash"),
         ("low_turnover_sma_10_200", SmaParameters(10, 200), "long_cash"),
@@ -473,6 +457,7 @@ def run_capture_analysis(
     for model_label, params, variant in scenarios:
         result = evaluate_strategy(
             prices=evaluation_prices,
+            evaluation_start=config.test_start,
             ticker=config.base_ticker,
             params=params,
             variant=variant,
@@ -523,7 +508,7 @@ def run_v03_comparison(
     config: ResearchConfig,
     selected_model: dict[str, Any],
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    evaluation_prices = prices.loc[config.test_start : config.test_end or prices.index.max()]
+    evaluation_prices = prices.loc[: config.test_end or prices.index.max()]
     scenarios: list[tuple[str, Any, str]] = [
         ("baseline_sma_20_100", SmaParameters(20, 100), "long_cash"),
         ("v2_sma_5_50", SmaParameters(5, 50), "long_cash"),
@@ -536,6 +521,7 @@ def run_v03_comparison(
     for model_label, params, variant in scenarios:
         result = evaluate_strategy(
             prices=evaluation_prices,
+            evaluation_start=config.test_start,
             ticker=config.base_ticker,
             params=params,
             variant=variant,
@@ -561,11 +547,12 @@ def run_v03_cost_sensitivity(
     config: ResearchConfig,
     selected_model: dict[str, Any],
 ) -> pd.DataFrame:
-    evaluation_prices = prices.loc[config.test_start : config.test_end or prices.index.max()]
+    evaluation_prices = prices.loc[: config.test_end or prices.index.max()]
     rows = []
     for cost_bps in config.cost_bps:
         result = evaluate_strategy(
             prices=evaluation_prices,
+            evaluation_start=config.test_start,
             ticker=config.base_ticker,
             params=selected_model["params"],
             variant=selected_model["variant"],
@@ -718,7 +705,7 @@ def run_v04_comparison(
     selected_v3_model: dict[str, Any],
     selected_v4_model: dict[str, Any],
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    evaluation_prices = prices.loc[config.test_start : config.test_end or prices.index.max()]
+    evaluation_prices = prices.loc[: config.test_end or prices.index.max()]
     scenarios: list[tuple[str, Any, str, str]] = [
         ("baseline_sma_20_100", SmaParameters(20, 100), "long_cash", "comparison"),
         ("v2_sma_5_50", SmaParameters(5, 50), "long_cash", "comparison"),
@@ -730,6 +717,7 @@ def run_v04_comparison(
     for model_label, params, variant, status in scenarios:
         result = evaluate_strategy(
             prices=evaluation_prices,
+            evaluation_start=config.test_start,
             ticker=config.base_ticker,
             params=params,
             variant=variant,
@@ -751,11 +739,12 @@ def run_v04_cost_sensitivity(
     config: ResearchConfig,
     selected_v4_model: dict[str, Any],
 ) -> pd.DataFrame:
-    evaluation_prices = prices.loc[config.test_start : config.test_end or prices.index.max()]
+    evaluation_prices = prices.loc[: config.test_end or prices.index.max()]
     rows = []
     for cost_bps in config.cost_bps:
         result = evaluate_strategy(
             prices=evaluation_prices,
+            evaluation_start=config.test_start,
             ticker=config.base_ticker,
             params=selected_v4_model["params"],
             variant=selected_v4_model["variant"],
@@ -778,7 +767,7 @@ def run_benchmark_comparison(
 ) -> pd.DataFrame:
     evaluation_prices = prices.loc[config.test_start : config.test_end or prices.index.max()]
     cash_returns = cash_return_series(evaluation_prices, config.cash_proxy_ticker)
-    risk_free_rate = float(cash_returns.mean() * 252) if cash_returns is not None and not cash_returns.empty else 0.0
+    risk_free_rate = cash_returns if cash_returns is not None else 0.0
     rows = []
     for ticker in [config.base_ticker, "SPY", "QQQ"]:
         if ticker in evaluation_prices.columns:
@@ -796,7 +785,7 @@ def run_benchmark_comparison(
         )
     rows.append(
         evaluate_strategy(
-            evaluation_prices,
+            prices.loc[:config.test_end or prices.index.max()],
             config.base_ticker,
             SmaParameters(1, 200),
             "long_cash",
@@ -804,13 +793,14 @@ def run_benchmark_comparison(
             config.initial_capital,
             "aapl_sma200_filter",
             cash_proxy=config.cash_proxy_ticker,
+            evaluation_start=config.test_start,
         )["row"]
         | {"model": "AAPL SMA200 filter"}
     )
     for model, selected in [("selected_v3", selected_v3_model), ("selected_v4", selected_v4_model)]:
         rows.append(
             evaluate_strategy(
-                evaluation_prices,
+                prices.loc[:config.test_end or prices.index.max()],
                 config.base_ticker,
                 selected["params"],
                 selected["variant"],
@@ -820,6 +810,7 @@ def run_benchmark_comparison(
                 config.market_regime_short_window,
                 config.market_regime_long_window,
                 cash_proxy=config.cash_proxy_ticker,
+            evaluation_start=config.test_start,
             )["row"]
             | {"model": model, "selection_status": selected["selection_status"]}
         )

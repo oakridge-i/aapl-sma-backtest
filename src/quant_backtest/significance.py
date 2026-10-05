@@ -11,6 +11,8 @@ from typing import Any
 import pandas as pd
 
 from .evaluation import evaluate_strategy
+from .data_quality import price_returns
+from .metrics import summarize_performance
 from .research_config import ResearchConfig
 from .research_data import cash_return_series
 from .stats import (
@@ -47,10 +49,7 @@ def run_significance_analysis(
     rows: list[dict[str, Any]] = []
     for model_label, params, variant, trials_table in models:
         # Match the warm-history evaluation used by the v6 comparison.
-        model_prices = (
-            prices.loc[: config.test_end or prices.index.max()]
-            if model_label == "selected_v6" else test_prices
-        )
+        model_prices = prices.loc[: config.test_end or prices.index.max()]
         result = evaluate_strategy(
             prices=model_prices,
             evaluation_start=config.test_start,
@@ -66,7 +65,7 @@ def run_significance_analysis(
         )
         curve = result["curve"]
         returns = curve["strategy_return"]
-        risk_free_rate = result["risk_free_rate"]
+        risk_free_rate = result["reference_returns"]
 
         row: dict[str, Any] = {
             "model": model_label,
@@ -90,15 +89,21 @@ def run_significance_analysis(
         )
         row |= deflated_sharpe_ratio(returns, trial_sharpes, risk_free_rate=risk_free_rate)
         cash_returns = cash_return_series(test_prices, config.cash_proxy_ticker)
-        weight_returns = test_prices[result["weights"].columns].pct_change().fillna(0.0)
+        weight_returns = price_returns(test_prices[result["target_weights"].columns])
         row |= timing_permutation_pvalue(
-            executed_weights=result["weights"],
+            executed_weights=result["target_weights"],
+            weights_are_targets=True,
+            risk_free_rate=risk_free_rate,
             asset_returns=weight_returns,
             cost_bps=10.0,
             cash_returns=cash_returns,
             n_permutations=config.permutation_iterations,
             seed=config.significance_seed,
         )
+        row["dsr_scope"] = "supplied_candidates_only_independence_approximation"
+        row["search_history_complete"] = False
+        row["bootstrap_scope"] = "fixed_returns_not_selection_pipeline"
+        row["probability_interpretation"] = "diagnostics_not_probability_of_alpha_or_future_profit"
         rows.append(row)
 
     if nested_oos_returns is not None and not nested_oos_returns.empty:
@@ -118,31 +123,29 @@ def _stitched_oos_significance(
     """Bootstrap diagnostics for the stitched nested walk-forward OOS series.
 
     Deflated Sharpe and the permutation test are intentionally omitted here:
-    the candidate set differs per window and the stitched series has no single
-    weight path, so those tests would not be well defined.
+    the candidate set differs per window. A pipeline-level test would need
+    to repeat selection; resampling the final path alone does not do this.
     """
     cash_returns = cash_return_series(prices, config.cash_proxy_ticker)
-    risk_free_rate = 0.0
-    if cash_returns is not None:
-        aligned = cash_returns.reindex(oos_returns.index).dropna()
-        if not aligned.empty:
-            risk_free_rate = float(aligned.mean() * 252)
     clean = oos_returns.dropna()
+    reference = cash_returns.reindex(clean.index).copy() if cash_returns is not None else 0.0
+    if isinstance(reference, pd.Series):
+        reference.iloc[0] = 0.0  # same initial valuation as the continuous engine
+    risk_free_rate = reference
     equity = (1.0 + clean).cumprod()
-    n_obs = int(clean.shape[0])
-    observed_sharpe = float("nan")
-    std = float(clean.std(ddof=0))
-    if std > 0:
-        observed_sharpe = float((clean.mean() * 252 - risk_free_rate) / (std * (252**0.5)))
-    row: dict[str, Any] = {
+    metrics = summarize_performance(model_label, equity, clean, risk_free_rate=reference)
+    row = {
         "model": model_label,
-        "variant": "per_window_selection",
+        "variant": "continuous_per_window_selection",
         "period_start": str(clean.index.min().date()),
         "period_end": str(clean.index.max().date()),
-        "n_obs": n_obs,
-        "observed_cagr": float(equity.iloc[-1] ** (252.0 / n_obs) - 1.0) if n_obs else float("nan"),
-        "observed_sharpe": observed_sharpe,
-        "observed_max_drawdown": float((equity / equity.cummax() - 1.0).min()) if n_obs else float("nan"),
+        "n_obs": len(clean),
+        "observed_cagr": metrics["cagr"],
+        "observed_sharpe": metrics["sharpe"],
+        "observed_max_drawdown": metrics["max_drawdown"],
+        "bootstrap_scope": "fixed_returns_not_selection_pipeline",
+        "search_history_complete": False,
+        "probability_interpretation": "resample_fractions_not_probability_of_alpha",
     }
     row |= block_bootstrap_summary(
         clean,
@@ -181,6 +184,9 @@ def run_pbo_analysis(
         return pd.DataFrame()
     summary |= {
         "grid": "trend_hysteresis",
+        "scope": "hysteresis_grid_only_not_v6_pipeline",
+        "candidate_subset": "evenly_spaced_when_capped",
+        "selection_metric": "raw_return_sharpe",
         "grid_size": int(len(table)),
         "period_start": str(candidate_returns.index.min().date()),
         "period_end": str(candidate_returns.index.max().date()),

@@ -8,6 +8,8 @@ from pathlib import Path
 import pandas as pd
 import yfinance as yf
 
+from .data_quality import validate_prices
+
 
 REQUIRED_COLUMNS = ("Open", "High", "Low", "Close", "Volume")
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -55,11 +57,15 @@ def download_ohlcv(
         raise ValueError(f"Missing expected columns from data source: {missing}")
 
     if "Adj Close" not in data.columns:
-        data["Adj Close"] = data["Close"]
+        raise ValueError("Adjusted Close is required; refusing to substitute unadjusted Close.")
 
     data = data.sort_index()
     data.index = pd.to_datetime(data.index)
     data.index.name = "Date"
+    validate_prices(data[["Open", "High", "Low", "Close", "Adj Close"]])
+    if ((data["Low"] > data[["Open", "Close"]].min(axis=1)) |
+            (data["High"] < data[["Open", "Close"]].max(axis=1))).any():
+        raise ValueError("Inconsistent OHLC prices.")
     return data
 
 
@@ -71,11 +77,12 @@ def download_adjusted_close(
     prices: dict[str, pd.Series] = {}
     for ticker in tickers:
         data = download_ohlcv(ticker=ticker, start=start, end=end)
-        column = "Adj Close" if "Adj Close" in data.columns else "Close"
+        column = "Adj Close"
         prices[ticker.strip().upper()] = data[column].rename(ticker.strip().upper())
     frame = pd.DataFrame(prices).sort_index()
     frame.index.name = "Date"
-    return frame.dropna(how="all")
+    validate_prices(frame)
+    return frame
 
 
 def frame_sha256(prices: pd.DataFrame) -> str:
@@ -94,7 +101,9 @@ def save_price_snapshot(prices: pd.DataFrame, path: Path) -> str:
 def load_price_snapshot(path: Path) -> pd.DataFrame:
     frame = pd.read_csv(path, index_col="Date", parse_dates=True)
     frame.index.name = "Date"
-    return frame.sort_index().astype(float)
+    frame = frame.astype(float)
+    validate_prices(frame)
+    return frame
 
 
 def default_end_date() -> str:

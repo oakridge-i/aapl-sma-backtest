@@ -52,6 +52,8 @@ CSV_OUTPUTS = {
     "v06_cost_sensitivity.csv": "v06_cost_sensitivity",
     "nested_ensemble_walk_forward.csv": "nested_ensemble_walk_forward",
     "nested_ensemble_summary.csv": "nested_ensemble_summary",
+    "nested_oos_curve.csv": "nested_oos_curve",
+    "nested_ensemble_oos_curve.csv": "nested_ensemble_oos_curve",
 }
 
 
@@ -92,6 +94,8 @@ def save_research_outputs(result: ResearchResult, output_dir: Path) -> None:
     result.v06_curve.to_csv(output_dir / "v06_selected_curve.csv", index_label="Date")
     result.nested_ensemble_walk_forward.to_csv(output_dir / "nested_ensemble_walk_forward.csv", index=False)
     result.nested_ensemble_summary.to_csv(output_dir / "nested_ensemble_summary.csv", index=False)
+    result.nested_oos_curve.to_csv(output_dir / "nested_oos_curve.csv", index_label="Date")
+    result.nested_ensemble_oos_curve.to_csv(output_dir / "nested_ensemble_oos_curve.csv", index_label="Date")
 
     save_price_snapshot(result.prices, output_dir / "data_snapshot.csv")
     if result.run_metadata:
@@ -174,6 +178,8 @@ def save_research_workbook(result: ResearchResult, output_path: Path) -> None:
         "v0.6 Costs": result.v06_cost_sensitivity,
         "Nested Ensemble WF": result.nested_ensemble_walk_forward,
         "Nested Ensemble Summary": result.nested_ensemble_summary,
+        "Nested OOS Curve": result.nested_oos_curve.reset_index(),
+        "Nested Ensemble OOS Curve": result.nested_ensemble_oos_curve.reset_index(),
         "Raw Results": _raw_results(result),
     }
 

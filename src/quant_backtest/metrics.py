@@ -39,8 +39,21 @@ def annualized_volatility(returns: pd.Series) -> float:
     return float(clean.std(ddof=0) * np.sqrt(TRADING_DAYS_PER_YEAR))
 
 
-def sharpe_ratio(returns: pd.Series, risk_free_rate: float = 0.0) -> float:
-    clean = returns.dropna()
+def excess_returns(returns: pd.Series, risk_free_rate: float | pd.Series = 0.0) -> pd.Series:
+    """Subtract an aligned daily reference, or a scalar annual simple rate."""
+    clean = returns.dropna().astype(float)
+    if isinstance(risk_free_rate, pd.Series):
+        reference = risk_free_rate.reindex(clean.index)
+        if not np.isfinite(reference.to_numpy()).all():
+            raise ValueError("Daily return reference must cover all evaluation dates.")
+        return clean - reference
+    if not np.isfinite(risk_free_rate):
+        raise ValueError("Return reference must be finite.")
+    return clean - risk_free_rate / TRADING_DAYS_PER_YEAR
+
+
+def sharpe_ratio(returns: pd.Series, risk_free_rate: float | pd.Series = 0.0) -> float:
+    clean = excess_returns(returns, risk_free_rate)
     if clean.empty:
         return math.nan
 
@@ -49,28 +62,25 @@ def sharpe_ratio(returns: pd.Series, risk_free_rate: float = 0.0) -> float:
         return math.nan
 
     annualized_return = clean.mean() * TRADING_DAYS_PER_YEAR
-    return float((annualized_return - risk_free_rate) / volatility)
+    return float(annualized_return / volatility)
 
 
 def downside_deviation(returns: pd.Series) -> float:
     clean = returns.dropna()
     if clean.empty:
         return math.nan
-    downside = clean[clean < 0]
-    if downside.empty:
-        return 0.0
-    return float(downside.std(ddof=0) * np.sqrt(TRADING_DAYS_PER_YEAR))
+    return float(np.sqrt(np.square(clean.clip(upper=0)).mean() * TRADING_DAYS_PER_YEAR))
 
 
-def sortino_ratio(returns: pd.Series, risk_free_rate: float = 0.0) -> float:
-    clean = returns.dropna()
+def sortino_ratio(returns: pd.Series, risk_free_rate: float | pd.Series = 0.0) -> float:
+    clean = excess_returns(returns, risk_free_rate)
     if clean.empty:
         return math.nan
     downside = downside_deviation(clean)
     if downside == 0 or math.isnan(downside):
         return math.nan
     annualized_return = clean.mean() * TRADING_DAYS_PER_YEAR
-    return float((annualized_return - risk_free_rate) / downside)
+    return float(annualized_return / downside)
 
 
 def drawdown_series(equity: pd.Series) -> pd.Series:
@@ -122,10 +132,9 @@ def years_between(index: pd.Index) -> float:
 
 
 def trade_frequency_per_year(trades: int, index: pd.Index) -> float:
-    years = years_between(index)
-    if math.isnan(years) or years == 0:
+    if len(index) == 0:
         return math.nan
-    return float(trades / years)
+    return float(trades * TRADING_DAYS_PER_YEAR / len(index))
 
 
 def capture_ratio(strategy_returns: pd.Series, benchmark_returns: pd.Series, direction: str) -> float:
@@ -201,7 +210,7 @@ def summarize_performance(
     returns: pd.Series,
     trades: int | None = None,
     win_rate: float | None = None,
-    risk_free_rate: float = 0.0,
+    risk_free_rate: float | pd.Series = 0.0,
     exposure: float | None = None,
     turnover: float | None = None,
     closed_trade_returns: pd.Series | None = None,
@@ -211,15 +220,20 @@ def summarize_performance(
     trade_stats = trade_distribution(
         pd.Series(dtype=float) if closed_trade_returns is None else closed_trade_returns
     )
+    # Reports consistently use 252 supplied sessions/year, including the
+    # starting zero-return session. Include initial capital in drawdown peaks.
+    growth = (1.0 + returns).cumprod()
+    annual_growth = float(growth.iloc[-1] ** (252.0 / len(growth)) - 1) if len(growth) else math.nan
+    drawdown = float((growth / growth.cummax().clip(lower=1.0) - 1).min())
     row = {
         "name": name,
-        "total_return": total_return(equity),
-        "cagr": cagr(equity),
+        "total_return": float(growth.iloc[-1] - 1) if len(growth) else math.nan,
+        "cagr": annual_growth,
         "ann_volatility": annualized_volatility(returns),
         "sharpe": sharpe_ratio(returns, risk_free_rate=risk_free_rate),
         "sortino": sortino_ratio(returns, risk_free_rate=risk_free_rate),
-        "calmar": calmar_ratio(equity),
-        "max_drawdown": max_drawdown(equity),
+        "calmar": annual_growth / abs(drawdown) if drawdown else math.nan,
+        "max_drawdown": drawdown,
         "trades": math.nan if trades is None else int(trades),
         "win_rate": math.nan if win_rate is None else float(win_rate),
         "exposure": math.nan if exposure is None else float(exposure),
@@ -227,12 +241,15 @@ def summarize_performance(
         **trade_stats,
     }
     if gross_equity is not None:
-        row["cost_drag"] = total_return(gross_equity) - total_return(equity)
+        initial_nav = equity.iloc[0] / (1.0 + returns.iloc[0])
+        row["cost_drag"] = float(gross_equity.iloc[-1] / initial_nav - growth.iloc[-1])
     else:
         row["cost_drag"] = math.nan
     if benchmark_equity is not None:
-        row["excess_cagr_vs_benchmark"] = cagr(equity) - cagr(benchmark_equity)
-        row["drawdown_improvement_vs_benchmark"] = max_drawdown(equity) - max_drawdown(benchmark_equity)
+        benchmark_growth = benchmark_equity / benchmark_equity.iloc[0]
+        benchmark_cagr = float(benchmark_growth.iloc[-1] ** (252.0 / len(returns)) - 1)
+        row["excess_cagr_vs_benchmark"] = annual_growth - benchmark_cagr
+        row["drawdown_improvement_vs_benchmark"] = drawdown - max_drawdown(benchmark_equity)
     else:
         row["excess_cagr_vs_benchmark"] = math.nan
         row["drawdown_improvement_vs_benchmark"] = math.nan
