@@ -1,7 +1,10 @@
 """Comparable, initially-cash replays of frozen instructions; no selection here."""
 from pathlib import Path
+import hashlib
+import json
 
 import pandas as pd
+import yaml
 
 from .costs import BpsCost
 from .data import frame_sha256, load_price_snapshot
@@ -10,6 +13,13 @@ from .engine import EngineConfig, run_weight_backtest
 from .metrics import annualized_turnover, summarize_performance
 from .research_config import ResearchConfig
 from .research_data import cash_return_series
+
+
+def config_sha256(path: Path) -> str:
+    """Hash YAML meaning, independent of Windows/Linux newlines and indentation."""
+    value = yaml.safe_load(path.read_text(encoding='utf-8-sig'))
+    canonical = json.dumps(value, sort_keys=True, separators=(',', ':'), default=str)
+    return hashlib.sha256(canonical.encode('utf-8')).hexdigest()
 
 
 def load_verified_snapshot(path: Path, expected_hash: str) -> pd.DataFrame:

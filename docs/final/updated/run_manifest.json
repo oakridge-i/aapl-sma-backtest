@@ -1,0 +1,246 @@
+{
+  "created_utc": "2026-10-05T21:11:42+00:00",
+  "data_source": "snapshot:outputs_closeout\\inputs\\updated.csv",
+  "data_sha256": "87b0315bc31e916696d6261c6db8b66088653bc21343edb0e3223c87b318fea8",
+  "data_start": "2015-01-02",
+  "data_end": "2026-10-05",
+  "tickers": [
+    "AAPL",
+    "MSFT",
+    "NVDA",
+    "AMZN",
+    "META",
+    "GOOGL",
+    "SPY",
+    "QQQ",
+    "BIL"
+  ],
+  "selection_period": "train",
+  "methodology_version": "a1_next_close_continuous_self_financing",
+  "execution": "signal_after_close_t_trade_close_t_plus_1_return_exposure_t_plus_2",
+  "cost_convention": "one_way_risky_notional_financed_from_nav",
+  "cash_model": "synthetic_remunerated_account_not_traded_etf",
+  "metric_reference": "BIL",
+  "metric_reference_is_risk_free_claim": false,
+  "annualization": "252_supplied_sessions_per_year",
+  "data_quality_policy": "finite_positive_complete_supplied_calendar_no_implicit_fill",
+  "historical_search_complete": false,
+  "git_commit": "1605584cbb56379f5f77ee4ab27e138a8b9b318d",
+  "versions": {
+    "python": "3.14.0",
+    "pandas": "3.0.3",
+    "numpy": "2.4.5",
+    "yfinance": "1.3.0"
+  },
+  "config": {
+    "start": "2015-01-01",
+    "end": "2026-10-06",
+    "initial_capital": 10000.0,
+    "base_ticker": "AAPL",
+    "universe": [
+      "AAPL",
+      "MSFT",
+      "NVDA",
+      "AMZN",
+      "META",
+      "GOOGL",
+      "SPY",
+      "QQQ"
+    ],
+    "cost_bps": [
+      0.0,
+      5.0,
+      10.0,
+      20.0,
+      50.0
+    ],
+    "short_windows": [
+      5,
+      10,
+      20,
+      30,
+      50
+    ],
+    "long_windows": [
+      50,
+      100,
+      150,
+      200
+    ],
+    "train_start": "2015-01-01",
+    "train_end": "2020-12-31",
+    "test_start": "2021-01-01",
+    "test_end": "2026-10-06",
+    "walk_forward_train_years": 3,
+    "walk_forward_test_years": 1,
+    "walk_forward_step_years": 1,
+    "spread_threshold": 0.01,
+    "output_dir": "outputs",
+    "entry_thresholds": [
+      0.0,
+      0.005,
+      0.01,
+      0.02
+    ],
+    "exit_thresholds": [
+      0.0,
+      -0.005,
+      -0.01
+    ],
+    "min_hold_days": [
+      0,
+      10,
+      20
+    ],
+    "cooldown_days": [
+      0,
+      5,
+      10
+    ],
+    "top_candidates": 20,
+    "final_turnover_limit": 6.0,
+    "market_regime_short_window": 50,
+    "market_regime_long_window": 200,
+    "enable_capture_model": true,
+    "capture_trend_candidates": 8,
+    "capture_risk_candidates": 20,
+    "capture_turnover_limit": 2.5,
+    "min_capture_spread": 0.1,
+    "min_upside_capture": 0.6,
+    "max_downside_capture": 0.5,
+    "max_drawdown_slippage": 0.03,
+    "target_volatilities": [
+      0.15,
+      0.2,
+      0.25
+    ],
+    "volatility_windows": [
+      20,
+      40,
+      60
+    ],
+    "max_realized_volatilities": [
+      0.35,
+      0.45
+    ],
+    "rolling_drawdown_thresholds": [
+      0.08,
+      0.12
+    ],
+    "sharp_loss_thresholds": [
+      -0.06,
+      -0.08
+    ],
+    "fallback_assets": [
+      "CASH",
+      "SPY",
+      "QQQ",
+      "HYBRID_QQQ"
+    ],
+    "fallback_weights": [
+      0.5,
+      0.75,
+      1.0
+    ],
+    "fallback_min_hold_days": [
+      0,
+      10
+    ],
+    "fallback_cooldown_days": [
+      0,
+      5
+    ],
+    "cash_proxy_ticker": "BIL",
+    "enable_significance": true,
+    "bootstrap_iterations": 1000,
+    "bootstrap_block_size": 21,
+    "permutation_iterations": 500,
+    "significance_seed": 42,
+    "parallel_workers": 8,
+    "enable_nested_walk_forward": true,
+    "enable_pbo": true,
+    "pbo_max_candidates": 200,
+    "pbo_blocks": 12,
+    "enable_signal_families": true,
+    "signal_family_grids": {
+      "ts_momentum": {
+        "lookbacks": [
+          63,
+          126,
+          252
+        ]
+      },
+      "donchian": {
+        "entry_windows": [
+          55,
+          100,
+          252
+        ],
+        "exit_windows": [
+          20,
+          50
+        ]
+      },
+      "atr_trend": {
+        "sma_windows": [
+          100,
+          200
+        ],
+        "atr_windows": [
+          20
+        ],
+        "scales": [
+          2.0,
+          3.0
+        ]
+      },
+      "dual_momentum": {
+        "lookbacks": [
+          126,
+          252
+        ],
+        "market": "SPY"
+      },
+      "high_52w": {
+        "window": 252,
+        "entry_thresholds": [
+          0.9,
+          0.95
+        ],
+        "exit_thresholds": [
+          0.8,
+          0.85
+        ]
+      }
+    },
+    "ensemble_min_members": 3,
+    "ensemble_max_members": 6,
+    "ensemble_include_trend_baseline": true,
+    "ensemble_turnover_limit": 6.0,
+    "enable_overlays": true,
+    "overlay_grids": {
+      "trailing_stop": {
+        "atr_windows": [
+          20
+        ],
+        "multiples": [
+          3.0,
+          4.0,
+          5.0
+        ]
+      },
+      "regime_scaling": {
+        "enabled": true,
+        "sma_window": 200,
+        "bear_cut": 0.5,
+        "bull_boost": 1.25
+      },
+      "vol_target": {
+        "window": 20,
+        "targets": [
+          0.2
+        ]
+      }
+    }
+  }
+}

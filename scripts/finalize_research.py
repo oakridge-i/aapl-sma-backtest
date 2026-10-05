@@ -16,7 +16,7 @@ sys.path.insert(0, str(ROOT / 'src'))
 
 import pandas as pd
 from quant_backtest import experiments
-from quant_backtest.closeout import build_policy_comparison, load_verified_snapshot
+from quant_backtest.closeout import build_policy_comparison, config_sha256, load_verified_snapshot
 from quant_backtest.data import frame_sha256
 from quant_backtest.evaluation import evaluate_strategy
 from quant_backtest.reports import save_research_outputs
@@ -59,7 +59,10 @@ def main():
     if args.replay:
         source = Path(args.replay)
         manifest = json.loads((source / 'target_manifest.json').read_text(encoding='utf-8'))
-        if manifest['data_sha256'] != frame_sha256(prices) or manifest['config_sha256'] != file_hash(config_path):
+        config_matches = (manifest['config_semantic_sha256'] == config_sha256(config_path)
+                          if 'config_semantic_sha256' in manifest
+                          else manifest['config_sha256'] == file_hash(config_path))
+        if manifest['data_sha256'] != frame_sha256(prices) or not config_matches:
             raise ValueError('Replay data/config hash mismatch.')
         schedules = {}
         for name, receipt in manifest['targets'].items():
@@ -101,6 +104,7 @@ def main():
         schedules[name] = curve[columns].rename(columns=lambda col: col.removeprefix('target_'))
     receipt = {'created_utc': datetime.now(timezone.utc).isoformat(),
                'data_sha256': frame_sha256(prices), 'config_sha256': file_hash(config_path),
+               'config_semantic_sha256': config_sha256(config_path),
                'git_commit': result.run_metadata['git_commit'], 'targets': {},
                'selected_models': models, 'scenario_selection': 'frozen_targets_no_refitting',
                'common_start': config.test_start, 'cash': config.cash_proxy_ticker}

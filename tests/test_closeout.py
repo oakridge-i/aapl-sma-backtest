@@ -74,6 +74,7 @@ def test_period_metrics_include_first_day_pnl_without_account_reset():
 
 def test_cli_offline_replay_verifies_targets_and_matches_direct_engine(tmp_path):
     from quant_backtest.data import frame_sha256
+    from quant_backtest.closeout import config_sha256
     dates = pd.bdate_range('2021-01-01', periods=8)
     prices = pd.DataFrame({'AAPL': np.arange(100., 108.), 'BIL': 100.}, index=dates)
     snapshot = tmp_path / 'prices.csv'
@@ -86,9 +87,12 @@ def test_cli_offline_replay_verifies_targets_and_matches_direct_engine(tmp_path)
     config_path = Path('configs/research_v6.yaml')
     manifest = {'data_sha256': frame_sha256(prices),
                 'config_sha256': hashlib.sha256(config_path.read_bytes()).hexdigest(),
+                'config_semantic_sha256': config_sha256(config_path),
                 'targets': {'fixed': {'file': path.name, 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}}}
     (source / 'target_manifest.json').write_text(json.dumps(manifest), encoding='utf-8')
-    command = [sys.executable, '-X', 'utf8', 'scripts/finalize_research.py', '--config', str(config_path),
+    portable_config = tmp_path / 'config.yaml'
+    portable_config.write_bytes(config_path.read_bytes().replace(b'\r\n', b'\n'))
+    command = [sys.executable, '-X', 'utf8', 'scripts/finalize_research.py', '--config', str(portable_config),
                '--snapshot', str(snapshot), '--expected-hash', frame_sha256(prices), '--replay', str(source)]
     output = tmp_path / 'replay'
     completed = subprocess.run(command + ['--output', str(output)], capture_output=True, text=True)
@@ -100,3 +104,14 @@ def test_cli_offline_replay_verifies_targets_and_matches_direct_engine(tmp_path)
     rejected = subprocess.run(command + ['--output', str(tmp_path / 'tampered')], capture_output=True, text=True)
     assert rejected.returncode != 0
     assert 'Target hash mismatch' in rejected.stderr
+
+
+def test_config_receipt_is_portable_across_line_endings(tmp_path):
+    from quant_backtest.closeout import config_sha256
+    lf = tmp_path / 'lf.yaml'
+    crlf = tmp_path / 'crlf.yaml'
+    lf.write_bytes(b'period:\n  start: 2015-01-01\ncompute:\n  workers: 8\n')
+    crlf.write_bytes(lf.read_bytes().replace(b'\n', b'\r\n'))
+    assert config_sha256(lf) == config_sha256(crlf)
+    crlf.write_bytes(crlf.read_bytes().replace(b'workers: 8', b'workers: 4'))
+    assert config_sha256(lf) != config_sha256(crlf)

@@ -39,11 +39,11 @@
 **Files:** `src/quant_backtest/closeout.py`, `scripts/finalize_research.py`, `tests/test_closeout.py`, `src/quant_backtest/experiments.py`, `configs/closeout_*.yaml`.
 **Interfaces:** Consumes `ResearchResult`, daily targets, prices, config and archive tables. Produces `comparison.csv`, `daily_audit.csv`, `sensitivity.csv`, `period_results.csv`, `archive_comparison.csv`, data audit and hashed run manifests.
 
-- [ ] Write tests for manual flat-price allocation fees, identical costed calendars, frozen targets under cost/lag changes and absent/mismatched snapshots. Run first; Expected: fail because closeout behavior is unavailable.
-- [ ] Implement `build_policy_comparison(prices, config, schedules, costs=(0,10,20,50), lags=(1,2))` using the common engine; expose selected model descriptors/targets from the existing research result without changing selection.
-- [ ] Add the CLI with explicit snapshot/config/output/archive arguments and immutable data validation; Expected: targeted tests pass.
-- [ ] Audit old snapshot hash/session coverage. Run unchanged old search once, then separately updated data; preserve logs/parameter choices and distinguish historical revisions. Expected: complete outputs with reconciled NAV/fees and honest source status.
-- [ ] Commit runner, tests, configs and compact manifests/tables (not raw prices).
+- [x] Write tests for manual flat-price allocation fees, identical costed calendars, frozen targets under cost/lag changes and absent/mismatched snapshots. Run first; Expected: fail because closeout behavior is unavailable.
+- [x] Implement `build_policy_comparison(prices, config, schedules, costs=(0,10,20,50), lags=(1,2))` using the common engine; expose selected model descriptors/targets from the existing research result without changing selection.
+- [x] Add the CLI with explicit snapshot/config/output/archive arguments and immutable data validation; Expected: targeted tests pass.
+- [x] Audit old snapshot hash/session coverage. Run unchanged old search once, then separately updated data; preserve logs/parameter choices and distinguish historical revisions. Expected: complete outputs with reconciled NAV/fees and honest source status.
+- [x] Commit runner, tests, configs and compact manifests/tables (not raw prices).
 
 ### Task 3: A4 final report
 
@@ -64,4 +64,5 @@
 - [ ] Update README with one recommended reproduction path; document external data access/redistribution conditions and snapshot hashes.
 - [ ] Obtain one independent whole-branch review; fix Important/Critical findings with RED→GREEN tests and a green suite. Expected: no unaddressed material finding.
 - [ ] Check existing tags, choose release name, commit locally and prepare a local tag; verify local SHA, tag, clean status and completion checklist. No push, PR, remote release, merge or reaction tools.
+
 
