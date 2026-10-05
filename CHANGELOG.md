@@ -1,7 +1,21 @@
 # Changelog
 
+## 0.6.0 — 2026-10-06 — Completed AAPL study
 
-## Unreleased — A1 methodology
+- Verify financial accounting, real future-data invariance and the fixed nested fallback.
+- Rerun frozen grids on the immutable June snapshot, then a separate October snapshot.
+- Compare costed constant allocations, warmed fixed models and continuous nested policies.
+- Replay frozen decisions under 0/10/20/50 bps and lag 1/2; retain hashed inputs and receipts.
+- Audit supplied trading sessions and separate historical vendor revisions from new dates.
+- Publish the final report, archive reconciliation, annual results and exported figures.
+- Pin a clean environment and verify offline replay of both preserved input bundles.
+- Correct the preview interpretation: complexity does not establish alpha or beat simple reduced exposure.
+- Retain raw prices locally; document exact reproduction prerequisites and data-use limits.
+
+The entries below describe development incorporated into this release.
+
+
+### A1 methodology (included in 0.6.0)
 
 - Finance one-way trading fees from NAV and rebalance against drifted holdings.
 - Execute close-generated signals at the following close, earning returns afterward.
@@ -14,7 +28,7 @@
 
 All notable project changes are documented here.
 
-## Unreleased - Minor fixes
+### Corrections before closeout (included in 0.6.0)
 
 - Warm v6 test-window indicators and stop state with prior history while
   keeping P&L, entry costs, and metrics confined to test dates. Apply the
@@ -26,7 +40,7 @@ All notable project changes are documented here.
 - The June 2026 M2/M3 preview metrics used cold-start test windows and are
   superseded as evidence; rerun the research workflow before citing them.
 
-## Unreleased (0.6.0 M3 - Exit, Sizing, and Regime Overlays)
+### M3 — Exit, Sizing, and Regime Overlays (included in 0.6.0)
 
 ### Added
 
@@ -68,7 +82,7 @@ All notable project changes are documented here.
   (stitched Sharpe `0.94` vs `0.96`) at roughly one third of the drawdown.
   Raw CAGR still trails buy-and-hold.
 
-## Unreleased (0.6.0 M2 - Signal Families and Ensemble)
+### M2 — Signal Families and Ensemble (included in 0.6.0)
 
 The first genuine model-search expansion since the SMA crossover, built on
 the M1 honest-selection machinery.
@@ -130,7 +144,7 @@ the M1 honest-selection machinery.
 - Raw CAGR (`11.7%`) still trails buy-and-hold (`27.7%`): this is
   risk-managed participation with one third of the drawdown, not alpha.
 
-## Unreleased (0.6.0 M1 - Research Foundation)
+### M1 — Research Foundation (included in 0.6.0)
 
 Engineering and methodology groundwork for the 0.6.0 model-improvement cycle.
 No trading logic changed; all 0.5.0 results remain reproducible.
@@ -393,3 +407,4 @@ goal is that reported out-of-sample numbers can be trusted.
 - Basic backtest metrics and buy-and-hold comparison.
 - CSV, PNG, and Excel report outputs.
 - Unit tests for signal shifting, transaction costs, metrics, and smoke runs.
+

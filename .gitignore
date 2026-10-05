@@ -24,3 +24,5 @@ outputs_smoke/
 Thumbs.db
 outputs_closeout/
 .venv-closeout/
+# Generated legacy exports include vendor prices; retain locally.
+outputs/
