@@ -1,7 +1,7 @@
 {
   "release": "0.6.0",
   "release_date": "2026-10-06",
-  "status": "completed_educational_study_pending_final_review",
+  "status": "completed_educational_study",
   "git": {
     "branch": "codex/aapl-final-release",
     "base": "5aabf02cf23a4ca4818e31c2c9708652c4f1f8bc",
@@ -12,10 +12,13 @@
   "verification": {
     "python": "3.14.0",
     "exact_dependency_pins": 49,
-    "full_suite_passed": 148,
+    "full_suite_passed": 149,
     "pip_check": "no_broken_requirements",
     "installed_package_version": "0.6.0",
-    "offline_replay_tolerance": {"rtol": 1e-12, "atol": 1e-10},
+    "offline_replay_tolerance": {
+      "rtol": 1e-12,
+      "atol": 1e-10
+    },
     "historical": {
       "data_sha256": "ffdb3eb9ed8108e5995e62b471ceab40c61ea3c457102756242fad2b9cbb96cd",
       "cutoff": "2026-06-10",
@@ -33,7 +36,9 @@
       "daily_rows_checked": 104040,
       "scenarios": 72,
       "receipt": "updated/verification.json"
-    }
+    },
+    "full_suite_seconds": 96.44,
+    "verified_code_commit": "7cbb293456ccdd1ed60356aa2b2a89c26f21086b"
   },
   "data_distribution": {
     "raw_prices_in_current_tree": false,
@@ -43,5 +48,16 @@
     "exact_vintage_reproduction_requires_external_inputs": true
   },
   "conclusion": "Economic advantage and alpha not established; terminate current indicator search.",
-  "review": "pending"
+  "review": {
+    "independent_reviewed_head": "f47ba77210efca86d20691b6085044181ed64680",
+    "model": "gpt-6-astra",
+    "critical_findings": 0,
+    "important_findings": 1,
+    "minor_findings": 0,
+    "material_finding_fixed": true,
+    "regression": "test_full_run_with_extra_history_replays_its_effective_snapshot",
+    "verification": "real_full_run_and_replay_RED_to_GREEN_plus149_green_tests",
+    "second_review": false,
+    "receipt": "review.md"
+  }
 }

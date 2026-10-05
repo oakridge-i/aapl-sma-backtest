@@ -60,10 +60,10 @@
 **Files:** `requirements-lock.txt`, `README.md`, `CHANGELOG.md`, `docs/final/reproduction.md`, `docs/final/release_manifest.json`.
 **Interfaces:** Consumes runner/configs/report; produces a clean-environment verification and compact local release on the completion branch.
 
-- [ ] Pin installed compatible dependencies, install in a fresh venv; run the full suite and deterministic offline replay. Expected: same accounting/metrics from preserved targets and prices.
-- [ ] Update README with one recommended reproduction path; document external data access/redistribution conditions and snapshot hashes.
-- [ ] Obtain one independent whole-branch review; fix Important/Critical findings with RED→GREEN tests and a green suite. Expected: no unaddressed material finding.
-- [ ] Check existing tags, choose release name, commit locally and prepare a local tag; verify local SHA, tag, clean status and completion checklist. No push, PR, remote release, merge or reaction tools.
+- [x] Pin installed compatible dependencies, install in a fresh venv; run the full suite and deterministic offline replay. Expected: same accounting/metrics from preserved targets and prices.
+- [x] Update README with one recommended reproduction path; document external data access/redistribution conditions and snapshot hashes.
+- [x] Obtain one independent whole-branch review; fix Important/Critical findings with RED→GREEN tests and a green suite. Expected: no unaddressed material finding.
+- [x] Check existing tags, choose release name, commit locally and prepare a local tag; verify local SHA, tag, clean status and completion checklist. No push, PR, remote release, merge or reaction tools.
 
 
 

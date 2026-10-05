@@ -1,0 +1,51 @@
+START run_parameter_sweep
+DONE run_parameter_sweep: 0.5s
+START run_parameter_sweep
+DONE run_parameter_sweep: 0.4s
+START run_cost_sensitivity
+DONE run_cost_sensitivity: 0.4s
+START run_train_test
+DONE run_train_test: 1.5s
+START run_walk_forward
+DONE run_walk_forward: 10.9s
+START run_multi_asset
+DONE run_multi_asset: 0.5s
+START run_model_leaderboard
+DONE run_model_leaderboard: 0.4s
+START run_hysteresis_sweep
+DONE run_hysteresis_sweep: 67.8s
+START run_hysteresis_sweep
+DONE run_hysteresis_sweep: 46.6s
+START run_allocation_leaderboard
+DONE run_allocation_leaderboard: 6.0s
+START run_capture_analysis
+DONE run_capture_analysis: 0.1s
+START run_turnover_analysis
+DONE run_turnover_analysis: 0.0s
+START run_v03_comparison
+DONE run_v03_comparison: 0.2s
+START run_v03_cost_sensitivity
+DONE run_v03_cost_sensitivity: 0.3s
+START run_v04_research
+DONE run_v04_research: 19.4s
+START run_family_sweep
+DONE run_family_sweep: 0.7s
+START run_ensemble_leaderboard
+DONE run_ensemble_leaderboard: 5.4s
+START run_overlay_leaderboard
+DONE run_overlay_leaderboard: 4.1s
+START run_v06_comparison
+DONE run_v06_comparison: 0.3s
+START run_v06_cost_sensitivity
+DONE run_v06_cost_sensitivity: 0.5s
+START run_final_model_walk_forward
+DONE run_final_model_walk_forward: 1.9s
+START run_nested_walk_forward
+DONE run_nested_walk_forward: 237.9s
+START run_nested_ensemble_walk_forward
+DONE run_nested_ensemble_walk_forward: 76.1s
+START run_significance_analysis
+DONE run_significance_analysis: 3.7s
+START run_pbo_analysis
+DONE run_pbo_analysis: 99.0s
+Full research and frozen sensitivity complete.
