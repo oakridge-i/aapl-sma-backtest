@@ -86,6 +86,9 @@ def main():
             return result
         setattr(experiments, name, timed)
     result = experiments.run_research(config, snapshot_path=Path(args.snapshot))
+    # The research period defines the effective history, including warmup.
+    # Its saved snapshot and every target/receipt must refer to that same frame.
+    prices = result.prices
     save_research_outputs(result, output)
     schedules = {}
     models = {'fixed_sma_20_100': {'params': SmaParameters(20, 100), 'variant': 'long_cash'},
@@ -104,6 +107,7 @@ def main():
         schedules[name] = curve[columns].rename(columns=lambda col: col.removeprefix('target_'))
     receipt = {'created_utc': datetime.now(timezone.utc).isoformat(),
                'data_sha256': frame_sha256(prices), 'config_sha256': file_hash(config_path),
+               'input_data_sha256': args.expected_hash,
                'config_semantic_sha256': config_sha256(config_path),
                'git_commit': result.run_metadata['git_commit'], 'targets': {},
                'selected_models': models, 'scenario_selection': 'frozen_targets_no_refitting',

@@ -5,6 +5,7 @@ import hashlib
 import json
 import subprocess
 import sys
+import yaml
 from dataclasses import replace
 from pathlib import Path
 
@@ -115,3 +116,55 @@ def test_config_receipt_is_portable_across_line_endings(tmp_path):
     assert config_sha256(lf) == config_sha256(crlf)
     crlf.write_bytes(crlf.read_bytes().replace(b'workers: 8', b'workers: 4'))
     assert config_sha256(lf) != config_sha256(crlf)
+
+
+def test_full_run_with_extra_history_replays_its_effective_snapshot(tmp_path):
+    from quant_backtest.data import frame_sha256, load_price_snapshot
+    settings = yaml.safe_load(Path('configs/research_v6.yaml').read_text(encoding='utf-8-sig'))
+    settings.update(period={'start': '2019-01-01', 'end': '2021-12-31'},
+        universe=['AAPL', 'SPY', 'QQQ', 'BIL'], compute={'workers': 0},
+        sma_grid={'short': [5], 'long': [20]},
+        train_test={'train_start': '2019-01-01', 'train_end': '2020-12-31',
+                    'test_start': '2021-01-01', 'test_end': '2021-12-31'},
+        walk_forward={'train_years': 1, 'test_years': 1, 'step_years': 1},
+        hysteresis={'entry_thresholds': [0.], 'exit_thresholds': [0.],
+                    'min_hold_days': [0], 'cooldown_days': [0]},
+        capture_model={'enabled': False}, significance={'enabled': False}, pbo={'enabled': False},
+        overlays={'enabled': False}, ensemble={'min_members': 2, 'max_members': 2,
+                                             'include_trend_baseline': True},
+        signal_families={'enabled': True, 'ts_momentum': {'lookbacks': [21, 63]},
+            'donchian': {'entry_windows': [], 'exit_windows': []},
+            'atr_trend': {'sma_windows': [], 'atr_windows': [], 'scales': []},
+            'dual_momentum': {'lookbacks': [], 'market': 'SPY'},
+            'high_52w': {'entry_thresholds': [], 'exit_thresholds': []}})
+    config_path = tmp_path / 'small.yaml'
+    config_path.write_text(yaml.safe_dump(settings), encoding='utf-8')
+    dates = pd.bdate_range('2018-01-01', '2022-02-28')
+    time = np.arange(len(dates))
+    prices = pd.DataFrame({'AAPL': 100 * np.exp(.0005 * time + .02 * np.sin(time / 11)),
+                          'SPY': 100 * np.exp(.0003 * time + .01 * np.sin(time / 20)),
+                          'QQQ': 100 * np.exp(.0007 * time + .02 * np.sin(time / 15)),
+                          'BIL': 100 * np.exp(.0001 * time)}, index=dates)
+    snapshot = tmp_path / 'wide.csv'
+    prices.to_csv(snapshot, index_label='Date')
+    output = tmp_path / 'full'
+    command = [sys.executable, '-X', 'utf8', 'scripts/finalize_research.py', '--config', str(config_path)]
+    full = subprocess.run(command + ['--snapshot', str(snapshot), '--expected-hash', frame_sha256(prices),
+                                    '--output', str(output)], capture_output=True, text=True)
+    assert full.returncode == 0, full.stderr
+    effective = load_price_snapshot(output / 'data_snapshot.csv')
+    manifest = json.loads((output / 'target_manifest.json').read_text(encoding='utf-8'))
+    assert manifest['data_sha256'] == frame_sha256(effective)
+    assert manifest['input_data_sha256'] == frame_sha256(prices)
+    for target in manifest['targets'].values():
+        saved = pd.read_csv(output / target['file'], index_col='Date', parse_dates=True)
+        assert saved.index.min() >= pd.Timestamp('2019-01-01')
+        assert saved.index.max() <= pd.Timestamp('2021-12-31')
+    replay = tmp_path / 'replay_effective'
+    result = subprocess.run(command + ['--snapshot', str(output / 'data_snapshot.csv'),
+        '--expected-hash', frame_sha256(effective), '--replay', str(output), '--output', str(replay)],
+        capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    original = pd.read_csv(output / 'sensitivity.csv')
+    repeated = pd.read_csv(replay / 'sensitivity.csv')
+    np.testing.assert_allclose(original.ending_nav, repeated.ending_nav, rtol=1e-12)

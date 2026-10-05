@@ -53,6 +53,8 @@ The data content hash canonicalizes the sorted frame to eight decimal places. Ta
 
 Use the same command without `--replay` and a new output directory. This performs selection, nested windows, statistical diagnostics and then comparable accounting. It takes substantially longer than replay. Historical training ends 2020-12-31; the search grids are unchanged from `research_v6.yaml`, except explicit cutoff and eight workers. Initial cash/warmed indicators and the same 10 bps engine are used.
 
+If the input extends outside the configured research period, the full runner uses the effective `result.prices` consistently for warmup, target schedules, saved prices and comparisons. New target receipts preserve `input_data_sha256` separately from the effective `data_sha256`. When replaying the saved bundle, pass its effective hash, not the hash of the wider original file. The two published datasets already fit their configured periods, so this correction leaves their numbers unchanged.
+
 The original vintage input is still available locally at `C:\Quantitive\model 1 aapl\outputs_v6_preview\data_snapshot.csv`; the historical run made its own copy. It was not overwritten. The historical full rerun used financial/selection code from A1, on a working tree based on `61466e9`; the new runner was committed as `1605584` after this run. The updated full run started from that commit. Subsequent receipt portability additions do not change decisions or NAV.
 
 ## Acquiring a different snapshot
