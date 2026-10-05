@@ -29,9 +29,12 @@ def test_engine_applies_one_day_execution_lag() -> None:
     )
 
     assert result.executed_weights.loc[dates[1], "AAPL"] == 0.0
-    assert result.executed_weights.loc[dates[2], "AAPL"] == 1.0
+    assert result.closing_weights.loc[dates[2], "AAPL"] == 1.0
+    assert result.executed_weights.loc[dates[2], "AAPL"] == 0.0
+    assert result.executed_weights.loc[dates[3], "AAPL"] == 1.0
     assert result.curve.loc[dates[1], "strategy_return"] == 0.0
-    assert result.curve.loc[dates[2], "strategy_return"] == pytest.approx(0.10)
+    assert result.curve.loc[dates[2], "strategy_return"] == 0.0
+    assert result.curve.loc[dates[3], "strategy_return"] == pytest.approx(0.10)
 
 
 def test_engine_turnover_and_cost_drag() -> None:
@@ -45,6 +48,6 @@ def test_engine_turnover_and_cost_drag() -> None:
         config=EngineConfig(initial_capital=100.0, cost_model=BpsCost(100.0)),
     )
 
-    assert result.curve["turnover"].sum() == 2.0
-    assert result.curve["transaction_cost"].sum() == pytest.approx(0.02)
+    assert result.curve["turnover"].sum() == pytest.approx(1 / 1.01 + 1.05)
+    assert result.curve["transaction_cost"].sum() == pytest.approx(0.01 / 1.01 + 0.0105)
     assert result.curve["gross_strategy_equity"].iloc[-1] > result.curve["strategy_equity"].iloc[-1]

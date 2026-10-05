@@ -145,6 +145,8 @@ class ResearchResult:
     v06_curve: pd.DataFrame = field(default_factory=pd.DataFrame)
     nested_ensemble_walk_forward: pd.DataFrame = field(default_factory=pd.DataFrame)
     nested_ensemble_summary: pd.DataFrame = field(default_factory=pd.DataFrame)
+    nested_oos_curve: pd.DataFrame = field(default_factory=pd.DataFrame)
+    nested_ensemble_oos_curve: pd.DataFrame = field(default_factory=pd.DataFrame)
     run_metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -255,18 +257,18 @@ def run_research(
     if config.enable_nested_walk_forward:
         nested = run_nested_walk_forward(prices, config)
         if config.enable_signal_families:
-            nested_ensemble = run_nested_ensemble_walk_forward(prices, config, selected_model)
+            nested_ensemble = run_nested_ensemble_walk_forward(prices, config)
 
     significance_results = pd.DataFrame()
     if config.enable_significance:
         extra_models = []
         extra_stitched = []
         if selected_v6_model is not None:
-            # The multiple-testing hurdle counts every candidate that competed
-            # for the v6 slot: ensemble compositions plus overlay combinations.
-            v6_trials = ensemble_leaderboard
+            # Include the family stage as well. This is still an approximate
+            # diagnostic: correlated trials and earlier human research remain.
+            v6_trials = pd.concat([family_leaderboard, ensemble_leaderboard], ignore_index=True, sort=False)
             if not overlay_leaderboard.empty:
-                v6_trials = pd.concat([ensemble_leaderboard, overlay_leaderboard], ignore_index=True, sort=False)
+                v6_trials = pd.concat([v6_trials, overlay_leaderboard], ignore_index=True, sort=False)
             extra_models.append(
                 ("selected_v6", selected_v6_model["params"], selected_v6_model["variant"], v6_trials)
             )
@@ -328,6 +330,8 @@ def run_research(
         v06_curve=v06_curve,
         nested_ensemble_walk_forward=nested_ensemble["windows"],
         nested_ensemble_summary=nested_ensemble["summary"],
+        nested_oos_curve=nested.get("curve", pd.DataFrame()),
+        nested_ensemble_oos_curve=nested_ensemble.get("curve", pd.DataFrame()),
         run_metadata=run_metadata,
     )
 
@@ -348,6 +352,15 @@ def _build_run_metadata(config: ResearchConfig, prices: pd.DataFrame, data_sourc
         "data_end": str(prices.index.max().date()),
         "tickers": list(prices.columns),
         "selection_period": "train",
+        "methodology_version": "a1_next_close_continuous_self_financing",
+        "execution": "signal_after_close_t_trade_close_t_plus_1_return_exposure_t_plus_2",
+        "cost_convention": "one_way_risky_notional_financed_from_nav",
+        "cash_model": "synthetic_remunerated_account_not_traded_etf",
+        "metric_reference": config.cash_proxy_ticker or "zero",
+        "metric_reference_is_risk_free_claim": False,
+        "annualization": "252_supplied_sessions_per_year",
+        "data_quality_policy": "finite_positive_complete_supplied_calendar_no_implicit_fill",
+        "historical_search_complete": False,
         "git_commit": _git_commit(),
         "versions": versions,
         "config": dict(config.__dict__),

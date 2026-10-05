@@ -10,6 +10,7 @@ import pandas as pd
 
 from .backtest import calculate_closed_trade_returns, calculate_win_rate, count_exposure_episodes
 from .costs import BpsCost
+from .data_quality import price_returns, validate_prices
 from .engine import EngineConfig, run_weight_backtest
 from .metrics import (
     annualized_turnover,
@@ -52,14 +53,17 @@ def evaluate_strategy(
     market_regime_long_window: int = 200,
     cash_proxy: str | None = None,
     evaluation_start: str | pd.Timestamp | None = None,
+    reference_returns: pd.Series | float | None = None,
 ) -> dict[str, Any]:
+    validate_prices(prices)
     ticker = ticker.upper()
     if ticker not in prices.columns:
         raise ValueError(f"Missing ticker in price data: {ticker}")
 
     # History warms indicators and stop state only. Each evaluation starts
-    # in cash at its first close; the normal one-day execution lag and entry
-    # costs apply from there, without including any training-period P&L.
+    # in cash at its first close; its first instruction trades the following
+    # close and begins earning asset returns one bar after execution.
+    # No training-period P&L is included.
     signals, weights = _generate_strategy_targets(
         prices, ticker, params, variant,
         market_regime_short_window, market_regime_long_window,
@@ -73,28 +77,30 @@ def evaluate_strategy(
     available = [column for column in weights.columns if column in prices.columns]
 
     cash_returns = cash_return_series(prices, cash_proxy)
-    returns = prices[available].pct_change().fillna(0.0)
+    returns = price_returns(prices[available])
     engine_result = run_weight_backtest(
         returns=returns,
         target_weights=weights,
         config=EngineConfig(initial_capital=initial_capital, cost_model=BpsCost(cost_bps)),
         cash_returns=cash_returns,
     )
-    risk_free_rate = 0.0
-    if cash_returns is not None:
-        aligned_cash = cash_returns.reindex(returns.index).dropna()
-        if not aligned_cash.empty:
-            risk_free_rate = float(aligned_cash.mean() * 252)
-    curve = _combine_curve(price, signals, engine_result.curve, engine_result.executed_weights, ticker, prices)
+    reference = reference_returns if reference_returns is not None else cash_returns if cash_returns is not None else 0.0
+    if isinstance(reference, pd.Series):
+        reference = reference.reindex(returns.index)
+    risk_free_rate = float(reference.mean() * 252) if isinstance(reference, pd.Series) else float(reference)
+    curve = _combine_curve(price, signals, engine_result.curve, engine_result.closing_weights, ticker, prices)
+    curve["return_reference"] = reference if isinstance(reference, pd.Series) else reference / 252
+    curve["earning_position"] = engine_result.executed_weights[ticker]
+    curve["earning_fallback_position"] = engine_result.executed_weights.drop(columns=[ticker]).sum(axis=1)
     row = summarize_curve(
         curve=curve,
-        executed_weights=engine_result.executed_weights,
+        executed_weights=engine_result.closing_weights,
         ticker=ticker,
         label=label,
         variant=variant,
         params=params,
         cost_bps=cost_bps,
-        risk_free_rate=risk_free_rate,
+        risk_free_rate=reference,
     )
     return {
         "row": row,
@@ -102,6 +108,11 @@ def evaluate_strategy(
         "metrics": pd.DataFrame([row]),
         "weights": engine_result.executed_weights,
         "risk_free_rate": risk_free_rate,
+        "reference_returns": reference,
+        "cash_return_proxy": cash_proxy,
+        "cash_model": "synthetic_remunerated_account_not_traded_etf",
+        "target_weights": weights,
+        "closing_weights": engine_result.closing_weights,
     }
 
 
@@ -115,6 +126,8 @@ def _generate_strategy_targets(
 ):
     """Generate unlagged weights with the base strategy's full market context."""
     if isinstance(params, OverlayParameters):
+        if params.regime_scaling is not None and "SPY" not in prices:
+            raise ValueError("Regime overlay requires SPY data.")
         overlay = OverlayStrategy(params)
         signals, weights = _generate_strategy_targets(
             prices, ticker, params.base, params.base_variant,
@@ -132,13 +145,20 @@ def _generate_strategy_targets(
         return replace(signals, target_position=target), weights
 
     family = family_for_params(params)
+    required_fallback = "SPY" if "spy" in variant else "QQQ" if "qqq" in variant else None
+    if required_fallback and required_fallback not in prices:
+        raise ValueError(f"Allocation variant requires {required_fallback} data.")
     capture_fallback = _capture_fallback_ticker(params) if family.needs_market_context else None
+    if capture_fallback and capture_fallback not in prices:
+        raise ValueError(f"Capture fallback requires {capture_fallback} data.")
     price = prices[ticker].dropna()
     strategy = build_strategy(params)
     if family.needs_market_context:
         fallback_ticker = capture_fallback if capture_fallback in prices.columns else None
         market_ticker = fallback_ticker or ("SPY" if "SPY" in prices.columns else "QQQ" if "QQQ" in prices.columns else None)
         market_risk_off = None
+        if params.risk.use_market_sma_filter and not market_ticker:
+            raise ValueError("Market SMA filter requires a market price series.")
         if params.risk.use_market_sma_filter and market_ticker:
             market_regime = build_sma_regime(
                 prices[market_ticker],
@@ -191,6 +211,8 @@ def _generate_strategy_targets(
         # Generic single-asset long/cash family from the registry.
         if family.needs_market_price:
             market_ticker = str(getattr(params, "market_ticker", "SPY")).upper()
+            if market_ticker not in prices:
+                raise ValueError(f"Strategy requires market data: {market_ticker}")
             market_price = prices[market_ticker] if market_ticker in prices.columns else None
             signals = strategy.generate(price, market_price=market_price)
         else:
@@ -214,7 +236,7 @@ def evaluate_equal_weight_signal_portfolio(
     target_weights = pd.concat(weights, axis=1).reindex(prices.index).fillna(0.0)
     if valid_tickers:
         target_weights = target_weights / len(valid_tickers)
-    returns = prices[valid_tickers].pct_change().fillna(0.0)
+    returns = price_returns(prices[valid_tickers])
     cash_returns = cash_return_series(prices, config.cash_proxy_ticker)
     result = run_weight_backtest(
         returns,
@@ -223,14 +245,10 @@ def evaluate_equal_weight_signal_portfolio(
         cash_returns=cash_returns,
     )
 
-    risk_free_rate = 0.0
-    if cash_returns is not None:
-        aligned_cash = cash_returns.reindex(returns.index).dropna()
-        if not aligned_cash.empty:
-            risk_free_rate = float(aligned_cash.mean() * 252)
+    risk_free_rate = cash_returns if cash_returns is not None else 0.0
     basket_return = returns.mean(axis=1)
     benchmark_equity = config.initial_capital * (1.0 + basket_return).cumprod()
-    total_exposure = result.executed_weights.abs().sum(axis=1)
+    total_exposure = result.closing_weights.abs().sum(axis=1)
     closed = calculate_closed_trade_returns(result.curve["strategy_return"], total_exposure)
     win_rate = calculate_win_rate(closed)
     row = summarize_performance(
@@ -240,7 +258,7 @@ def evaluate_equal_weight_signal_portfolio(
         trades=count_exposure_episodes(total_exposure),
         win_rate=win_rate,
         risk_free_rate=risk_free_rate,
-        exposure=float((total_exposure > 0).mean()),
+        exposure=float((result.executed_weights.sum(axis=1) > 0).mean()),
         turnover=annualized_turnover(result.curve["turnover"]),
         closed_trade_returns=closed,
         gross_equity=result.curve["gross_strategy_equity"],
@@ -253,9 +271,9 @@ def evaluate_equal_weight_signal_portfolio(
         "short_window": params.short_window,
         "long_window": params.long_window,
         "cost_bps": 10.0,
-        "benchmark_cagr": summarize_performance("benchmark", benchmark_equity, basket_return)["cagr"],
-        "benchmark_sharpe": summarize_performance("benchmark", benchmark_equity, basket_return)["sharpe"],
-        "benchmark_max_drawdown": summarize_performance("benchmark", benchmark_equity, basket_return)["max_drawdown"],
+        "benchmark_cagr": summarize_performance("benchmark", benchmark_equity, basket_return, risk_free_rate=risk_free_rate)["cagr"],
+        "benchmark_sharpe": summarize_performance("benchmark", benchmark_equity, basket_return, risk_free_rate=risk_free_rate)["sharpe"],
+        "benchmark_max_drawdown": summarize_performance("benchmark", benchmark_equity, basket_return, risk_free_rate=risk_free_rate)["max_drawdown"],
     }
 
 
@@ -267,7 +285,7 @@ def summarize_curve(
     variant: str,
     params: ParamsLike,
     cost_bps: float,
-    risk_free_rate: float = 0.0,
+    risk_free_rate: float | pd.Series = 0.0,
 ) -> dict[str, Any]:
     total_exposure = executed_weights.abs().sum(axis=1)
     closed = calculate_closed_trade_returns(curve["strategy_return"], total_exposure)
@@ -279,10 +297,13 @@ def summarize_curve(
         risk_free_rate=risk_free_rate,
     )
     ticker_weight = executed_weights.get(ticker, pd.Series(0.0, index=curve.index)).reindex(curve.index).fillna(0.0)
+    earning_weight = curve.get("earning_position", ticker_weight)
     fallback_columns = [column for column in executed_weights.columns if column != ticker]
     fallback_exposure = (
         float(executed_weights[fallback_columns].abs().sum(axis=1).mean()) if fallback_columns else 0.0
     )
+    if "earning_fallback_position" in curve:
+        fallback_exposure = float(curve["earning_fallback_position"].mean())
     holds = holding_periods(ticker_weight)
     # Count exposure episodes, not turnover days: with volatility sizing the
     # weight changes almost daily without opening or closing a trade.
@@ -298,7 +319,7 @@ def summarize_curve(
         trades=trade_count,
         win_rate=win_rate,
         risk_free_rate=risk_free_rate,
-        exposure=float((total_exposure > 0).mean()),
+        exposure=float(((earning_weight + curve.get("earning_fallback_position", 0.0)) > 0).mean()),
         turnover=annualized_turnover(curve["turnover"]),
         closed_trade_returns=closed,
         gross_equity=curve["gross_strategy_equity"],
@@ -308,7 +329,9 @@ def summarize_curve(
         "ticker": ticker,
         "label": label,
         "variant": variant,
-        "risk_free_rate": risk_free_rate,
+        "risk_free_rate": float(risk_free_rate.mean() * 252) if isinstance(risk_free_rate, pd.Series) else risk_free_rate,
+        "return_reference_kind": "aligned_daily_reference" if isinstance(risk_free_rate, pd.Series) else "annual_scalar",
+        "execution_model": "signal_after_close_trade_next_close",
         "short_window": getattr(params, "short_window", np.nan),
         "long_window": getattr(params, "long_window", np.nan),
         "spread_threshold": getattr(params, "spread_threshold", 0.0),
@@ -326,8 +349,8 @@ def summarize_curve(
         "upside_capture": upside,
         "downside_capture": downside,
         "capture_spread": capture_spread(upside, downside),
-        "missed_return_while_in_cash": missed_return_while_underweight(curve["buy_hold_return"], ticker_weight),
-        "avoided_downside_while_out": avoided_downside_while_underweight(curve["buy_hold_return"], ticker_weight),
+        "missed_return_while_in_cash": missed_return_while_underweight(curve["buy_hold_return"], earning_weight),
+        "avoided_downside_while_out": avoided_downside_while_underweight(curve["buy_hold_return"], earning_weight),
         "average_holding_days": float(holds.mean()) if not holds.empty else np.nan,
         "median_holding_days": float(holds.median()) if not holds.empty else np.nan,
         "trade_frequency_per_year": trade_frequency_per_year(trade_count, curve.index),
@@ -355,7 +378,7 @@ def _buy_hold_benchmark_row(
     price: pd.Series,
     initial_capital: float,
     ticker: str,
-    risk_free_rate: float = 0.0,
+    risk_free_rate: float | pd.Series = 0.0,
 ) -> dict[str, Any]:
     returns = price.pct_change().fillna(0.0)
     equity = initial_capital * (1.0 + returns).cumprod()
@@ -403,7 +426,7 @@ def _combine_curve(
     ]:
         if hasattr(signals, column):
             curve[column] = getattr(signals, column).reindex(curve.index)
-    curve["buy_hold_return"] = prices[ticker].pct_change().reindex(curve.index).fillna(0.0)
+    curve["buy_hold_return"] = price_returns(prices[[ticker]])[ticker].reindex(curve.index)
     curve["buy_hold_equity"] = engine_curve["strategy_equity"].iloc[0] * (1.0 + curve["buy_hold_return"]).cumprod()
     curve["buy_hold_drawdown"] = curve["buy_hold_equity"] / curve["buy_hold_equity"].cummax() - 1.0
     return curve

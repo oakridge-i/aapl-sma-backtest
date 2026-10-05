@@ -5,6 +5,10 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
+from .engine import EngineConfig, run_weight_backtest
+from .costs import BpsCost
+from .data_quality import price_returns, validate_prices
+
 from .metrics import (
     annualized_turnover,
     drawdown_series,
@@ -66,7 +70,7 @@ def run_sma_backtest(prices: pd.DataFrame, config: BacktestConfig) -> BacktestRe
         position=equity_curve["position"],
     )
     win_rate = calculate_win_rate(closed_trade_returns)
-    trade_count = int(equity_curve["trade"].sum())
+    trade_count = count_exposure_episodes(equity_curve["position"])
 
     metrics = metrics_table(
         [
@@ -77,11 +81,10 @@ def run_sma_backtest(prices: pd.DataFrame, config: BacktestConfig) -> BacktestRe
                 trades=trade_count,
                 win_rate=win_rate,
                 risk_free_rate=config.risk_free_rate,
-                exposure=exposure_percentage(equity_curve["position"]),
+                exposure=exposure_percentage(equity_curve["earning_position"]),
                 turnover=annualized_turnover(equity_curve["trade"]),
                 closed_trade_returns=closed_trade_returns,
-                gross_equity=config.initial_capital
-                * (1.0 + equity_curve["position"] * equity_curve["asset_return"]).cumprod(),
+                gross_equity=equity_curve["gross_strategy_equity"],
                 benchmark_equity=equity_curve["buy_hold_equity"],
             ),
             summarize_performance(
@@ -117,25 +120,21 @@ def apply_position_and_costs(
     cost_bps: float,
     initial_capital: float,
 ) -> dict[str, pd.Series]:
-    aligned_position = position.reindex(price.index).fillna(0.0).astype(float)
-    daily_return = price.pct_change().fillna(0.0)
-    trade = aligned_position.diff().abs().fillna(aligned_position.abs())
-    cost_rate = cost_bps / 10_000.0
-    transaction_cost = trade * cost_rate
-
-    strategy_return = aligned_position * daily_return - transaction_cost
-    buy_hold_return = daily_return
-    strategy_equity = initial_capital * (1.0 + strategy_return).cumprod()
-    buy_hold_equity = initial_capital * (1.0 + buy_hold_return).cumprod()
-
+    # Callers supply weights to hold after each close (already lagged signals).
+    daily_return = price_returns(price.to_frame("asset"))["asset"]
+    schedule = position.reindex(price.index).to_frame("asset")
+    result = run_weight_backtest(daily_return.to_frame("asset"), schedule,
+                                EngineConfig(initial_capital, BpsCost(cost_bps), execution_lag=0))
     return {
         "asset_return": daily_return,
-        "strategy_return": strategy_return,
-        "buy_hold_return": buy_hold_return,
-        "trade": trade,
-        "transaction_cost": transaction_cost,
-        "strategy_equity": strategy_equity,
-        "buy_hold_equity": buy_hold_equity,
+        "earning_position": result.executed_weights["asset"],
+        "strategy_return": result.curve.strategy_return,
+        "buy_hold_return": daily_return,
+        "trade": result.curve.turnover,
+        "transaction_cost": result.curve.transaction_cost,
+        "strategy_equity": result.curve.strategy_equity,
+        "gross_strategy_equity": result.curve.gross_strategy_equity,
+        "buy_hold_equity": initial_capital * (1 + daily_return).cumprod(),
     }
 
 
@@ -180,12 +179,11 @@ def calculate_win_rate(closed_trade_returns: pd.Series) -> float:
 def _select_price_series(prices: pd.DataFrame, preferred_column: str) -> pd.Series:
     if preferred_column in prices.columns:
         price = prices[preferred_column]
-    elif "Close" in prices.columns:
-        price = prices["Close"]
     else:
-        raise ValueError(f"DataFrame must contain {preferred_column!r} or 'Close'.")
+        raise ValueError(f"DataFrame must contain the explicitly requested {preferred_column!r}.")
 
-    clean = price.dropna().astype(float)
+    validate_prices(price.to_frame("price"))
+    clean = price.astype(float)
     if clean.empty:
         raise ValueError("Price series is empty after dropping missing values.")
     clean.name = "price"

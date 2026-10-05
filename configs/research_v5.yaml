@@ -13,8 +13,8 @@ universe:
   - SPY
   - QQQ
 cash:
-  # Cash proxy: the uninvested weight earns this ETF's total return, and its
-  # annualized return is used as the risk-free rate in Sharpe/Sortino.
+  # Synthetic cash remuneration proxy, not an actual ETF position.
+  # Sharpe/Sortino subtract its aligned daily return; no risk-free claim.
   proxy: BIL
 significance:
   enabled: true

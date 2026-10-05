@@ -7,10 +7,11 @@ import pandas as pd
 
 from .data import default_end_date, download_adjusted_close
 from .research_config import ResearchConfig
+from .data_quality import price_returns
 
 
 def research_tickers(config: ResearchConfig) -> list[str]:
-    tickers = list(config.universe)
+    tickers = list(dict.fromkeys([config.base_ticker, *config.universe]))
     if config.cash_proxy_ticker and config.cash_proxy_ticker not in tickers:
         tickers.append(config.cash_proxy_ticker)
     return tickers
@@ -39,6 +40,8 @@ def create_fixture_prices(config: ResearchConfig) -> pd.DataFrame:
 
 
 def cash_return_series(prices: pd.DataFrame, cash_proxy: str | None) -> pd.Series | None:
-    if not cash_proxy or cash_proxy not in prices.columns:
+    if not cash_proxy:
         return None
-    return prices[cash_proxy].dropna().pct_change().fillna(0.0)
+    if cash_proxy not in prices.columns:
+        raise ValueError(f"Missing configured cash proxy: {cash_proxy}")
+    return price_returns(prices[[cash_proxy]])[cash_proxy]

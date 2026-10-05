@@ -1,3 +1,7 @@
+> Historical research log: all numerical results below predate A1.
+> See [A1 methodology](a1_methodology.md) for current accounting, execution
+> and statistical interpretation. No current performance is established by this log.
+
 # Research Summary
 
 This project evaluates a long-only SMA timing model for AAPL and related assets.
