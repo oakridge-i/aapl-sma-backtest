@@ -50,10 +50,10 @@
 **Files:** `docs/final/research_report.md`, `docs/final/figures/`, `docs/final/*.csv`.
 **Interfaces:** Consumes verified Task 2 evidence; produces the final narrative and figures, source/data-method receipt and reproducible commands.
 
-- [ ] Create NAV, drawdown, earning exposure and turnover charts on the common calendar, plus period/cost/lag evidence.
-- [ ] Explain archive differences, selected model changes, uncertainty and manual-search limits; report whether evidence supports an advantage without claiming calibrated alpha.
-- [ ] Check every quoted number against CSV, inspect all exported charts and links; Expected: source-backed internally consistent report.
-- [ ] Commit report and figures.
+- [x] Create NAV, drawdown, earning exposure and turnover charts on the common calendar, plus period/cost/lag evidence.
+- [x] Explain archive differences, selected model changes, uncertainty and manual-search limits; report whether evidence supports an advantage without claiming calibrated alpha.
+- [x] Check every quoted number against CSV, inspect all exported charts and links; Expected: source-backed internally consistent report.
+- [x] Commit report and figures.
 
 ### Task 4: A5 reproducible release
 
@@ -64,5 +64,6 @@
 - [ ] Update README with one recommended reproduction path; document external data access/redistribution conditions and snapshot hashes.
 - [ ] Obtain one independent whole-branch review; fix Important/Critical findings with RED→GREEN tests and a green suite. Expected: no unaddressed material finding.
 - [ ] Check existing tags, choose release name, commit locally and prepare a local tag; verify local SHA, tag, clean status and completion checklist. No push, PR, remote release, merge or reaction tools.
+
 
 
