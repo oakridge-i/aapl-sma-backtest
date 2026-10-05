@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import time
 from datetime import date
 from pathlib import Path
 
@@ -15,20 +16,36 @@ YFINANCE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 yf.set_tz_cache_location(str(YFINANCE_CACHE_DIR))
 
 
-def download_ohlcv(ticker: str, start: str, end: str | None = None) -> pd.DataFrame:
-    """Download daily OHLCV data and return a clean single-ticker DataFrame."""
+def download_ohlcv(
+    ticker: str,
+    start: str,
+    end: str | None = None,
+    retries: int = 3,
+    retry_wait_seconds: float = 15.0,
+) -> pd.DataFrame:
+    """Download daily OHLCV data and return a clean single-ticker DataFrame.
+
+    Yahoo Finance intermittently returns empty frames under rate limiting, so
+    empty responses are retried with a pause before giving up.
+    """
     normalized_ticker = ticker.strip().upper()
     if not normalized_ticker:
         raise ValueError("Ticker must not be empty.")
 
-    data = yf.download(
-        normalized_ticker,
-        start=start,
-        end=end,
-        auto_adjust=False,
-        progress=False,
-        threads=False,
-    )
+    data = pd.DataFrame()
+    for attempt in range(max(1, retries)):
+        if attempt:
+            time.sleep(retry_wait_seconds)
+        data = yf.download(
+            normalized_ticker,
+            start=start,
+            end=end,
+            auto_adjust=False,
+            progress=False,
+            threads=False,
+        )
+        if not data.empty:
+            break
     if data.empty:
         raise ValueError(f"No price data returned for {normalized_ticker}.")
 

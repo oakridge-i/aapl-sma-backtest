@@ -46,8 +46,14 @@ def run_significance_analysis(
 
     rows: list[dict[str, Any]] = []
     for model_label, params, variant, trials_table in models:
+        # Match the warm-history evaluation used by the v6 comparison.
+        model_prices = (
+            prices.loc[: config.test_end or prices.index.max()]
+            if model_label == "selected_v6" else test_prices
+        )
         result = evaluate_strategy(
-            prices=test_prices,
+            prices=model_prices,
+            evaluation_start=config.test_start,
             ticker=config.base_ticker,
             params=params,
             variant=variant,

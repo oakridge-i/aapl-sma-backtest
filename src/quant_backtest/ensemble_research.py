@@ -238,7 +238,7 @@ def run_v06_comparison(
     selected_v6_model: dict[str, Any],
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """One test-period evaluation per final model (the single test touch)."""
-    evaluation_prices = prices.loc[config.test_start : config.test_end or prices.index.max()]
+    evaluation_prices = prices.loc[: config.test_end or prices.index.max()]
     scenarios: list[tuple[str, Any, str, str]] = [
         ("baseline_sma_20_100", SmaParameters(20, 100), "long_cash", "comparison"),
         ("selected_v3", selected_v3_model["params"], selected_v3_model["variant"], selected_v3_model["selection_status"]),
@@ -254,6 +254,7 @@ def run_v06_comparison(
     for model_label, params, variant, status in scenarios:
         result = evaluate_strategy(
             prices=evaluation_prices,
+            evaluation_start=config.test_start,
             ticker=config.base_ticker,
             params=params,
             variant=variant,
@@ -275,11 +276,12 @@ def run_v06_cost_sensitivity(
     config: ResearchConfig,
     selected_v6_model: dict[str, Any],
 ) -> pd.DataFrame:
-    evaluation_prices = prices.loc[config.test_start : config.test_end or prices.index.max()]
+    evaluation_prices = prices.loc[: config.test_end or prices.index.max()]
     rows = []
     for cost_bps in config.cost_bps:
         result = evaluate_strategy(
             prices=evaluation_prices,
+            evaluation_start=config.test_start,
             ticker=config.base_ticker,
             params=selected_v6_model["params"],
             variant=selected_v6_model["variant"],
@@ -322,8 +324,17 @@ def run_nested_ensemble_walk_forward(
         leaderboard = run_ensemble_leaderboard(train_prices, config, candidates)
         selected = select_ensemble_model(leaderboard, candidates, fallback_model)
 
+        overlay_leaderboard = pd.DataFrame()
+        if config.enable_overlays:
+            from .overlay_research import overlay_parameter_grid, run_overlay_leaderboard, select_overlay_model
+
+            overlay_candidates = overlay_parameter_grid(config, selected["params"], selected["variant"])
+            overlay_leaderboard = run_overlay_leaderboard(train_prices, config, overlay_candidates)
+            selected = select_overlay_model(overlay_leaderboard, overlay_candidates, selected)
+
         result = evaluate_strategy(
-            prices=test_prices,
+            prices=prices.loc[train_start:test_end],
+            evaluation_start=test_start,
             ticker=config.base_ticker,
             params=selected["params"],
             variant=selected["variant"],
@@ -348,7 +359,7 @@ def run_nested_ensemble_walk_forward(
                 "selected_variant": selected["variant"],
                 "selected_label": selected_label,
                 "selection_status": selected["selection_status"],
-                "candidates_evaluated": int(len(family_table) + len(leaderboard)),
+                "candidates_evaluated": int(len(family_table) + len(leaderboard) + len(overlay_leaderboard)),
                 "cagr": row["cagr"],
                 "sharpe": row["sharpe"],
                 "max_drawdown": row["max_drawdown"],

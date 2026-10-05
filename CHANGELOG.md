@@ -2,6 +2,60 @@
 
 All notable project changes are documented here.
 
+## Unreleased - Minor fixes
+
+- Warm v6 test-window indicators and stop state with prior history while
+  keeping P&L, entry costs, and metrics confined to test dates. Apply the
+  same evaluation to comparison, cost, walk-forward, and significance runs.
+- Preserve base allocation variants, fallback holdings, and market tickers
+  when evaluating overlays; identity now matches the original portfolio.
+- Require a strict score improvement over identity even if identity fails
+  a hard selection filter. Include overlays in nested candidate counts.
+- The June 2026 M2/M3 preview metrics used cold-start test windows and are
+  superseded as evidence; rerun the research workflow before citing them.
+
+## Unreleased (0.6.0 M3 - Exit, Sizing, and Regime Overlays)
+
+### Added
+
+- Composable overlays (`quant_backtest.overlays`) that post-process any base
+  strategy's target position, applied in a fixed order:
+  - regime scaling: cut exposure (default to 50%) when the market trades
+    below its long SMA, boost it (capped at 1) when above;
+  - volatility targeting: scale exposure down when realized volatility runs
+    above target;
+  - ATR trailing stop: force the position flat after price falls a multiple
+    of ATR from the post-entry peak; re-arm on a new high or when the base
+    signal itself resets. The stop runs last so it sees the final sized
+    exposure.
+- Overlay search (`quant_backtest.overlay_research`) around the selected v6
+  model: a small grid (trailing-stop multiples x regime scaling on/off x
+  vol targeting on/off) that always contains the identity combination, so an
+  overlay must beat the plain model on the train period (with the 20 bps
+  stress) to displace it. Output: `overlay_leaderboard.csv`.
+- Overlay re-selection inside every nested-ensemble walk-forward window, so
+  the stitched OOS scoreboard covers the full M3 procedure.
+- The Deflated Sharpe hurdle for `selected_v6` now counts ensemble and
+  overlay candidates together.
+- `overlays` section in `configs/research_v6.yaml`.
+- Empty Yahoo Finance responses are now retried with a pause before failing
+  (`download_ohlcv` saw intermittent rate-limit failures).
+
+### Findings (preview run, same data snapshot as the M2 preview)
+
+- On the primary scoreboard (nested walk-forward, overlays re-selected per
+  window) the stitched OOS Sharpe improved from `0.91` to `0.94` with CAGR
+  `11.9%` and max drawdown essentially unchanged at `-14.2%`; the bootstrap
+  Sharpe interval tightened to `+0.38` to `+1.46` and the probability of a
+  negative true Sharpe dropped to `0.0%` (0 of 1000 bootstrap samples).
+- On the frozen 2015/2021 split the train-selected overlay
+  (`selected_v6_overlay`) cut the test max drawdown from `-23.4%` to
+  `-14.6%` while raising CAGR (`3.2%` to `4.8%`) and Sharpe (`0.08` to
+  `0.19`).
+- The risk-managed profile is now: near-benchmark risk-adjusted returns
+  (stitched Sharpe `0.94` vs `0.96`) at roughly one third of the drawdown.
+  Raw CAGR still trails buy-and-hold.
+
 ## Unreleased (0.6.0 M2 - Signal Families and Ensemble)
 
 The first genuine model-search expansion since the SMA crossover, built on

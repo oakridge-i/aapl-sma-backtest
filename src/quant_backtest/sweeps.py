@@ -180,7 +180,8 @@ def run_final_model_walk_forward(
             continue
         for model_label, params, variant in models:
             result = evaluate_strategy(
-                prices=test_prices,
+                prices=prices.loc[:test_end],
+                evaluation_start=test_start,
                 ticker=config.base_ticker,
                 params=params,
                 variant=variant,

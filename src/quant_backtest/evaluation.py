@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 
 import numpy as np
@@ -21,6 +22,7 @@ from .metrics import (
     trade_frequency_per_year,
 )
 from .registry import build_strategy, family_for_params
+from .overlays import OverlayParameters, OverlayStrategy
 from .research_config import ResearchConfig
 from .research_data import cash_return_series
 from .strategies import (
@@ -49,21 +51,88 @@ def evaluate_strategy(
     market_regime_short_window: int = 50,
     market_regime_long_window: int = 200,
     cash_proxy: str | None = None,
+    evaluation_start: str | pd.Timestamp | None = None,
 ) -> dict[str, Any]:
     ticker = ticker.upper()
     if ticker not in prices.columns:
         raise ValueError(f"Missing ticker in price data: {ticker}")
 
-    family = family_for_params(params)
-    needed = [ticker]
-    capture_fallback = _capture_fallback_ticker(params) if family.needs_market_context else None
-    if variant in {"fallback_spy", "long_spy_regime", "hybrid_spy_regime"} or capture_fallback == "SPY":
-        needed.append("SPY")
-    if variant in {"fallback_qqq", "long_qqq_regime", "hybrid_qqq_regime"} or capture_fallback == "QQQ":
-        needed.append("QQQ")
-    needed = list(dict.fromkeys(needed))
-    available = [column for column in needed if column in prices.columns]
+    # History warms indicators and stop state only. Each evaluation starts
+    # in cash at its first close; the normal one-day execution lag and entry
+    # costs apply from there, without including any training-period P&L.
+    signals, weights = _generate_strategy_targets(
+        prices, ticker, params, variant,
+        market_regime_short_window, market_regime_long_window,
+    )
+    if evaluation_start is not None:
+        prices = prices.loc[evaluation_start:]
+        if prices.empty:
+            raise ValueError("No prices in the evaluation period.")
+        weights = weights.reindex(prices.index).fillna(0.0)
+    price = prices[ticker].dropna()
+    available = [column for column in weights.columns if column in prices.columns]
 
+    cash_returns = cash_return_series(prices, cash_proxy)
+    returns = prices[available].pct_change().fillna(0.0)
+    engine_result = run_weight_backtest(
+        returns=returns,
+        target_weights=weights,
+        config=EngineConfig(initial_capital=initial_capital, cost_model=BpsCost(cost_bps)),
+        cash_returns=cash_returns,
+    )
+    risk_free_rate = 0.0
+    if cash_returns is not None:
+        aligned_cash = cash_returns.reindex(returns.index).dropna()
+        if not aligned_cash.empty:
+            risk_free_rate = float(aligned_cash.mean() * 252)
+    curve = _combine_curve(price, signals, engine_result.curve, engine_result.executed_weights, ticker, prices)
+    row = summarize_curve(
+        curve=curve,
+        executed_weights=engine_result.executed_weights,
+        ticker=ticker,
+        label=label,
+        variant=variant,
+        params=params,
+        cost_bps=cost_bps,
+        risk_free_rate=risk_free_rate,
+    )
+    return {
+        "row": row,
+        "curve": curve,
+        "metrics": pd.DataFrame([row]),
+        "weights": engine_result.executed_weights,
+        "risk_free_rate": risk_free_rate,
+    }
+
+
+def _generate_strategy_targets(
+    prices: pd.DataFrame,
+    ticker: str,
+    params: Any,
+    variant: str,
+    market_regime_short_window: int,
+    market_regime_long_window: int,
+):
+    """Generate unlagged weights with the base strategy's full market context."""
+    if isinstance(params, OverlayParameters):
+        overlay = OverlayStrategy(params)
+        signals, weights = _generate_strategy_targets(
+            prices, ticker, params.base, params.base_variant,
+            market_regime_short_window, market_regime_long_window,
+        )
+        if params.is_identity():
+            return signals, weights
+        # Base evaluation resolves its own market ticker (e.g. QQQ for dual
+        # momentum). The regime overlay independently uses the SPY regime.
+        target = overlay.apply(weights[ticker], prices[ticker], prices.get("SPY"))
+        other_weight = weights.drop(columns=[ticker]).sum(axis=1)
+        target = target.clip(upper=(1.0 - other_weight).clip(lower=0.0))
+        weights = weights.copy()
+        weights[ticker] = target
+        return replace(signals, target_position=target), weights
+
+    family = family_for_params(params)
+    capture_fallback = _capture_fallback_ticker(params) if family.needs_market_context else None
     price = prices[ticker].dropna()
     strategy = build_strategy(params)
     if family.needs_market_context:
@@ -90,7 +159,6 @@ def evaluate_strategy(
             fallback_regime=fallback_regime,
         )
         weights = build_capture_aware_weights(ticker, signals, fallback_ticker)
-        available = [column for column in weights.columns if column in prices.columns]
     elif isinstance(params, TrendAllocationParameters):
         signals = strategy.generate(price)
         if variant == "fallback_spy" and "SPY" in prices.columns:
@@ -129,37 +197,7 @@ def evaluate_strategy(
             signals = strategy.generate(price)
         weights = build_single_asset_weights(ticker, signals.target_position)
 
-    cash_returns = cash_return_series(prices, cash_proxy)
-    returns = prices[available].pct_change().fillna(0.0)
-    engine_result = run_weight_backtest(
-        returns=returns,
-        target_weights=weights,
-        config=EngineConfig(initial_capital=initial_capital, cost_model=BpsCost(cost_bps)),
-        cash_returns=cash_returns,
-    )
-    risk_free_rate = 0.0
-    if cash_returns is not None:
-        aligned_cash = cash_returns.reindex(returns.index).dropna()
-        if not aligned_cash.empty:
-            risk_free_rate = float(aligned_cash.mean() * 252)
-    curve = _combine_curve(price, signals, engine_result.curve, engine_result.executed_weights, ticker, prices)
-    row = summarize_curve(
-        curve=curve,
-        executed_weights=engine_result.executed_weights,
-        ticker=ticker,
-        label=label,
-        variant=variant,
-        params=params,
-        cost_bps=cost_bps,
-        risk_free_rate=risk_free_rate,
-    )
-    return {
-        "row": row,
-        "curve": curve,
-        "metrics": pd.DataFrame([row]),
-        "weights": engine_result.executed_weights,
-        "risk_free_rate": risk_free_rate,
-    }
+    return signals, weights
 
 
 def evaluate_equal_weight_signal_portfolio(
