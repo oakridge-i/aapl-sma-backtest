@@ -15,6 +15,7 @@ dependencies = [
     "yfinance>=0.2.54",
     "openpyxl>=3.1",
     "PyYAML>=6.0",
+    "exchange-calendars>=4.13.2",
 ]
 
 [project.optional-dependencies]

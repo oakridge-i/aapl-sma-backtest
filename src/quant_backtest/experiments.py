@@ -148,6 +148,7 @@ class ResearchResult:
     nested_oos_curve: pd.DataFrame = field(default_factory=pd.DataFrame)
     nested_ensemble_oos_curve: pd.DataFrame = field(default_factory=pd.DataFrame)
     run_metadata: dict[str, Any] = field(default_factory=dict)
+    selected_models: dict[str, Any] = field(default_factory=dict)
 
 
 def run_research(
@@ -333,6 +334,7 @@ def run_research(
         nested_oos_curve=nested.get("curve", pd.DataFrame()),
         nested_ensemble_oos_curve=nested_ensemble.get("curve", pd.DataFrame()),
         run_metadata=run_metadata,
+        selected_models={"selected_v3": selected_model, "selected_v6": selected_v6_model},
     )
 
 
