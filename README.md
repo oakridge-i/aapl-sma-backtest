@@ -34,6 +34,12 @@ period is touched once per final model, and the final models are additionally
 evaluated across every walk-forward window. Pre-0.5 reported metrics should be
 treated as optimistic; the 0.5 reports supersede them.
 
+**Preview correction:** the June 2026 M2/M3 numbers below used test windows
+without indicator warm-up and must be recomputed. Current v6 evaluation uses
+prior history for indicators and stop state, but includes only test dates in
+returns and metrics. Each test window starts in cash at its first close;
+execution and entry costs follow on the next trading day.
+
 The 0.6.0-dev preview run (June 2026) produced the project's first
 statistically supported positive result: an equal-vote ensemble of signal
 families, with its composition re-selected inside every walk-forward window,
@@ -192,7 +198,11 @@ Added in 0.6.0-dev:
 - exit/sizing/regime overlays (ATR trailing stop, volatility targeting,
   regime exposure scaling) are searched around the selected model on the
   train period; the grid always contains the identity combination, so an
-  overlay must beat the plain model to be selected.
+  overlay must strictly beat the plain model to be selected, including when
+  the plain model fails a hard filter. Identity preserves the base allocation
+  variant and market ticker. Overlays adjust the AAPL allocation, retain the
+  base fallback holdings, cap total exposure at 1, and leave released capital
+  in cash.
 
 The first honest run (June 2026) found that with train-only selection the
 model picks `SMA 5/50` hysteresis and earns test CAGR `5.89%` with Sharpe

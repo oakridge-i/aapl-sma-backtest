@@ -23,7 +23,9 @@ from .research_config import ResearchConfig
 from .selection import add_selection_score
 
 
-def overlay_parameter_grid(config: ResearchConfig, base_params: Any) -> list[OverlayParameters]:
+def overlay_parameter_grid(
+    config: ResearchConfig, base_params: Any, base_variant: str | None = None,
+) -> list[OverlayParameters]:
     raw = config.overlay_grids or {}
     trailing_raw = raw.get("trailing_stop", {})
     regime_raw = raw.get("regime_scaling", {})
@@ -49,10 +51,12 @@ def overlay_parameter_grid(config: ResearchConfig, base_params: Any) -> list[Ove
     ]
 
     if isinstance(base_params, OverlayParameters):
+        base_variant = base_variant or base_params.base_variant
         base_params = base_params.base
     return [
         OverlayParameters(
             base=base_params,
+            base_variant=base_variant or "long_cash",
             trailing_stop=trailing_stop,
             regime_scaling=regime_scaling,
             vol_target=vol_target,
@@ -130,6 +134,9 @@ def select_overlay_model(
     if passing.empty:
         return base_model
     best = passing.sort_values("selection_score", ascending=False).iloc[0]
+    identity = leaderboard[leaderboard["is_identity"]]
+    if identity.empty or not best["selection_score"] > identity.iloc[0]["selection_score"]:
+        return base_model
     candidate = candidates[int(best["candidate_index"])]
     if candidate.is_identity():
         return base_model

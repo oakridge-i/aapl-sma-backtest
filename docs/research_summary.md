@@ -268,6 +268,10 @@ Interpretation:
 
 ### M3: exit, sizing, and regime overlays (preview)
 
+**Historical results:** the M2/M3 preview figures require a rerun after the
+warm-up and overlay identity fixes. They do not describe the corrected
+evaluation and should not be used as validated performance claims.
+
 The M3 pass added composable overlays around the selected model - an ATR
 trailing stop, volatility targeting, and regime exposure scaling - searched
 on the train period against an identity baseline (the overlay must beat the

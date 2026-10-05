@@ -228,7 +228,9 @@ def run_research(
         ensemble_leaderboard = run_ensemble_leaderboard(train_prices, config, ensemble_candidates)
         selected_v6_model = select_ensemble_model(ensemble_leaderboard, ensemble_candidates, selected_model)
         if config.enable_overlays:
-            overlay_candidates = overlay_parameter_grid(config, selected_v6_model["params"])
+            overlay_candidates = overlay_parameter_grid(
+                config, selected_v6_model["params"], selected_v6_model["variant"]
+            )
             overlay_leaderboard = run_overlay_leaderboard(train_prices, config, overlay_candidates)
             selected_v6_model = select_overlay_model(overlay_leaderboard, overlay_candidates, selected_v6_model)
         v06_comparison, v06_curve = run_v06_comparison(

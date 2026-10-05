@@ -67,12 +67,15 @@ class OverlayParameters:
     trailing_stop: TrailingStopParameters | None = None
     regime_scaling: RegimeScalingParameters | None = None
     vol_target: VolTargetParameters | None = None
+    base_variant: str = "long_cash"
 
     def is_identity(self) -> bool:
         return self.trailing_stop is None and self.regime_scaling is None and self.vol_target is None
 
     def label(self) -> str:
         parts = [self.base.label()]
+        if self.base_variant != "long_cash":
+            parts.append(f"base_variant={self.base_variant}")
         if self.regime_scaling is not None:
             parts.append(self.regime_scaling.label())
         if self.vol_target is not None:
@@ -98,13 +101,7 @@ class OverlayStrategy:
         else:
             base_signals = base_strategy.generate(clean)
 
-        target = base_signals.target_position.reindex(clean.index).fillna(0.0).clip(lower=0.0, upper=1.0)
-        if self.params.regime_scaling is not None:
-            target = _apply_regime_scaling(target, market_price, self.params.regime_scaling)
-        if self.params.vol_target is not None:
-            target = _apply_vol_target(target, clean, self.params.vol_target)
-        if self.params.trailing_stop is not None:
-            target = _apply_trailing_stop(target, clean, self.params.trailing_stop)
+        target = self.apply(base_signals.target_position, clean, market_price)
 
         return SmaSignalFrame(
             target_position=target.rename("target_position"),
@@ -113,6 +110,24 @@ class OverlayStrategy:
             spread=base_signals.spread.reindex(clean.index),
             momentum=base_signals.momentum,
         )
+
+
+    def apply(
+        self,
+        target: pd.Series,
+        price: pd.Series,
+        market_price: pd.Series | None = None,
+    ) -> pd.Series:
+        """Adjust the base asset's allocation; released capital stays in cash."""
+        clean = price.dropna().astype(float)
+        target = target.reindex(clean.index).fillna(0.0).clip(lower=0.0, upper=1.0)
+        if self.params.regime_scaling is not None:
+            target = _apply_regime_scaling(target, market_price, self.params.regime_scaling)
+        if self.params.vol_target is not None:
+            target = _apply_vol_target(target, clean, self.params.vol_target)
+        if self.params.trailing_stop is not None:
+            target = _apply_trailing_stop(target, clean, self.params.trailing_stop)
+        return target.rename("target_position")
 
 
 def _apply_regime_scaling(

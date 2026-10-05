@@ -2,6 +2,18 @@
 
 All notable project changes are documented here.
 
+## Unreleased - Minor fixes
+
+- Warm v6 test-window indicators and stop state with prior history while
+  keeping P&L, entry costs, and metrics confined to test dates. Apply the
+  same evaluation to comparison, cost, walk-forward, and significance runs.
+- Preserve base allocation variants, fallback holdings, and market tickers
+  when evaluating overlays; identity now matches the original portfolio.
+- Require a strict score improvement over identity even if identity fails
+  a hard selection filter. Include overlays in nested candidate counts.
+- The June 2026 M2/M3 preview metrics used cold-start test windows and are
+  superseded as evidence; rerun the research workflow before citing them.
+
 ## Unreleased (0.6.0 M3 - Exit, Sizing, and Regime Overlays)
 
 ### Added
