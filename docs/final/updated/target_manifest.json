@@ -1,0 +1,101 @@
+{
+  "created_utc": "2026-10-05T21:11:53.031996+00:00",
+  "data_sha256": "87b0315bc31e916696d6261c6db8b66088653bc21343edb0e3223c87b318fea8",
+  "config_sha256": "5ab88e26afaee562d4d3e061e0669e3cb648162ee8b33032a1d950ebb5f2beea",
+  "git_commit": "1605584cbb56379f5f77ee4ab27e138a8b9b318d",
+  "targets": {
+    "fixed_sma_20_100": {
+      "file": "targets_fixed_sma_20_100.csv",
+      "sha256": "bca24cd1deb0e3d81a73a828d9ca9998ce318975af911e6eb5870b8deb16d5b5"
+    },
+    "selected_v3": {
+      "file": "targets_selected_v3.csv",
+      "sha256": "a1025cfd54a909c42a6adaec55aeaaeec3f2bdd3b65c75bb24a06c54b73b9cbf"
+    },
+    "selected_v6": {
+      "file": "targets_selected_v6.csv",
+      "sha256": "4565e76a077d3ca170b02071fba2c6d7122e4ea5f6917b7c83f219a881051188"
+    },
+    "nested_v3": {
+      "file": "targets_nested_v3.csv",
+      "sha256": "60cb83dd1fde0fb757fde472feaab8a0394583dbe70809152a779c4d5e45b59c"
+    },
+    "nested_ensemble": {
+      "file": "targets_nested_ensemble.csv",
+      "sha256": "6110a49e73118b40a881583a3149e2ce51b36f5dd5b14228a779c2282c0d9412"
+    }
+  },
+  "selected_models": {
+    "fixed_sma_20_100": {
+      "params": {
+        "type": "SmaParameters",
+        "fields": {
+          "short_window": 20,
+          "long_window": 100,
+          "spread_threshold": 0.0,
+          "momentum_window": null,
+          "partial_exposure": false
+        }
+      },
+      "variant": "long_cash"
+    },
+    "selected_v3": {
+      "params": {
+        "type": "TrendAllocationParameters",
+        "fields": {
+          "short_window": 50,
+          "long_window": 200,
+          "entry_threshold": 0.02,
+          "exit_threshold": -0.005,
+          "min_hold_days": 0,
+          "cooldown_days": 0
+        }
+      },
+      "variant": "long_cash_hysteresis",
+      "selection_status": "selected_v3"
+    },
+    "selected_v6": {
+      "params": {
+        "type": "OverlayParameters",
+        "fields": {
+          "base": {
+            "members": [
+              {
+                "sma_window": 200,
+                "atr_window": 20,
+                "scale": 2.0
+              },
+              {
+                "entry_window": 252,
+                "exit_window": 50
+              },
+              {
+                "window": 252,
+                "entry_threshold": 0.95,
+                "exit_threshold": 0.85
+              }
+            ]
+          },
+          "trailing_stop": null,
+          "regime_scaling": {
+            "sma_window": 200,
+            "bear_cut": 0.5,
+            "bull_boost": 1.25
+          },
+          "vol_target": {
+            "window": 20,
+            "target": 0.2
+          },
+          "base_variant": "ensemble_vote"
+        }
+      },
+      "variant": "overlay",
+      "selection_status": "selected_v6_overlay"
+    }
+  },
+  "scenario_selection": "frozen_targets_no_refitting",
+  "common_start": "2021-01-01",
+  "cash": "BIL",
+  "config_semantic_sha256": "1ca01d86a71d3f3ca91d8698ab9c27faa09aee200d218a1dd1662ae1ac883f18",
+  "receipt_upgrade": "added_semantic_config_hash_no_change_to_data_targets_or_metrics"
+}

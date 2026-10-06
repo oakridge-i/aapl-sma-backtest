@@ -22,3 +22,7 @@ outputs_smoke/
 .pytest_tmp/
 .DS_Store
 Thumbs.db
+outputs_closeout/
+.venv-closeout/
+# Generated legacy exports include vendor prices; retain locally.
+outputs/

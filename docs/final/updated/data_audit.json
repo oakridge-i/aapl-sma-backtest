@@ -1,0 +1,38 @@
+{
+  "data_sha256": "87b0315bc31e916696d6261c6db8b66088653bc21343edb0e3223c87b318fea8",
+  "sessions": 2956,
+  "start": "2015-01-02",
+  "end": "2026-10-05",
+  "tickers": [
+    "AAPL",
+    "MSFT",
+    "NVDA",
+    "AMZN",
+    "META",
+    "GOOGL",
+    "SPY",
+    "QQQ",
+    "BIL"
+  ],
+  "missing_values": 0,
+  "duplicate_dates": 0,
+  "calendar": "XNYS (shared US equity full-day session coverage proxy)",
+  "calendar_library_version": "4.13.2",
+  "missing_sessions": [],
+  "unexpected_sessions": [],
+  "maximum_absolute_daily_return": {
+    "AAPL": 0.15328860628500296,
+    "MSFT": 0.15506739165511707,
+    "NVDA": 0.29806743097926813,
+    "AMZN": 0.15320588778032107,
+    "META": 0.2639009009739448,
+    "GOOGL": 0.1625842697492046,
+    "SPY": 0.10942366759274946,
+    "QQQ": 0.12003076496041487,
+    "BIL": 0.0007653596771795002
+  },
+  "aapl_split_2020_08_31_adjusted_return": 0.033911903832886114,
+  "adjustments_independently_certified": false,
+  "vintage": "retrospectively adjusted vendor snapshot, not point-in-time data",
+  "repair_policy": "no fill, no deletion, no automatic outlier repair"
+}

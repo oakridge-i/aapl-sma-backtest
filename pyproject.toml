@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "quant-backtest"
-version = "0.6.0.dev0"
+version = "0.6.0"
 description = "AAPL SMA robustness research: long-only trend backtests with honest selection and significance testing"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -15,6 +15,7 @@ dependencies = [
     "yfinance>=0.2.54",
     "openpyxl>=3.1",
     "PyYAML>=6.0",
+    "exchange-calendars>=4.13.2",
 ]
 
 [project.optional-dependencies]

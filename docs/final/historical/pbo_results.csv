@@ -1,0 +1,2 @@
+pbo,n_candidates,n_blocks,n_combinations,mean_logit,median_oos_relative_rank,grid,scope,candidate_subset,selection_metric,grid_size,period_start,period_end
+0.5064935064935064,200.0,12.0,924.0,-0.16992777135378617,0.4925373134328358,trend_hysteresis,hysteresis_grid_only_not_v6_pipeline,evenly_spaced_when_capped,raw_return_sharpe,2052,2015-01-02,2026-06-10

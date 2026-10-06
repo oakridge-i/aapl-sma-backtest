@@ -1,0 +1,3 @@
+name,total_return,cagr,ann_volatility,sharpe,sortino,calmar,max_drawdown,trades,win_rate,exposure,turnover,average_trade_return,average_win,average_loss,profit_factor,cost_drag,excess_cagr_vs_benchmark,drawdown_improvement_vs_benchmark,windows,accounting,windows_beating_benchmark,median_window_sharpe,median_window_cagr
+nested_oos_stitched,1.2488208419705669,0.09722706718125007,0.22806485593100564,0.41025008353915454,0.5804799406891032,0.2424487835973051,-0.401021055823234,,,,,,,,,,-0.176491490610321,-0.015861922287861097,9,continuous_account,1.0,0.534067546099514,0.1390705572414932
+benchmark_stitched,7.2741823110902235,0.27371855779157106,0.30430514422511945,0.8642459113090304,1.2679833337421438,0.7106635516574938,-0.3851591335353729,,,,,,,,,,,,9,continuous_account,,,
